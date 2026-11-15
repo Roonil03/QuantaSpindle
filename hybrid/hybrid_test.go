@@ -18,6 +18,67 @@ type fakeAccelerator struct {
 	calls              map[uint64]int
 }
 
+type queuedAccelerator struct {
+	fakeAccelerator
+	gate chan struct{}
+	warm bool
+}
+
+func (f *queuedAccelerator) BeginWarmRun(ctx context.Context, c qs.Config) (qs.BackendSession, bool, error) {
+	select {
+	case <-f.gate:
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	if !f.warm {
+		return nil, false, nil
+	}
+	return &warmFakeLease{fakeAccelerator: &f.fakeAccelerator, warm: true}, true, nil
+}
+
+func (f *queuedAccelerator) BeginRun(ctx context.Context, c qs.Config) (qs.BackendSession, error) {
+	select {
+	case <-f.gate:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return &warmFakeLease{fakeAccelerator: &f.fakeAccelerator, warm: f.warm}, nil
+}
+
+type warmFakeLease struct {
+	*fakeAccelerator
+	warm bool
+}
+
+func (f *warmFakeLease) WasWarm() bool { return f.warm }
+
+func TestQueuedSelectionUsesAcquiredWarmth(t *testing.T) {
+	for _, paths := range []int{WarmMinPaths, ColdMinPaths} {
+		c := candidate()
+		c.Paths = paths
+		f := &queuedAccelerator{gate: make(chan struct{})}
+		type result struct {
+			selection *Selection
+			err       error
+		}
+		done := make(chan result, 1)
+		go func() { s, err := selectBackend(context.Background(), c, Options{}, f, true); done <- result{s, err} }()
+		// The previous lease failed and invalidated its process before release.
+		close(f.gate)
+		r := <-done
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		defer r.selection.Close()
+		if r.selection.Decision.Warm || r.selection.Decision.MinCUDAPaths != ColdMinPaths {
+			t.Fatalf("stale warm decision: %+v", r.selection.Decision)
+		}
+		if (r.selection.Decision.Reason == "cuda-threshold") != (paths == ColdMinPaths) {
+			t.Fatalf("wrong route: %+v", r.selection.Decision)
+		}
+	}
+}
+
 func (f *fakeAccelerator) BeginRun(context.Context, qs.Config) (qs.BackendSession, error) {
 	f.begins++
 	if f.beginErr != nil {
@@ -129,6 +190,17 @@ func TestOnlyUnavailableFallsBackAndCancellationPropagates(t *testing.T) {
 	f := &fakeAccelerator{}
 	if _, err := selectBackend(ctx, candidate(), Options{}, f, false); !errors.Is(err, context.Canceled) || f.begins != 0 {
 		t.Fatal("canceled selection started work", err)
+	}
+}
+
+func TestPublicSelectionFallsBackForMissingRunner(t *testing.T) {
+	s, err := Select(context.Background(), candidate(), Options{Runner: "missing-quantaspindle-runner-for-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.Decision.Reason != "cuda-unavailable" || s.Backend.Name() != (qs.CPU{}).Name() {
+		t.Fatalf("missing runner did not route to CPU: %+v", s.Decision)
 	}
 }
 

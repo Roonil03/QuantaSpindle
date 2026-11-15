@@ -122,6 +122,9 @@ func selectBackend(ctx context.Context, c qs.Config, o Options, accelerator qs.R
 		return nil, fmt.Errorf("hybrid options must be nonnegative")
 	}
 	threshold := ColdMinPaths
+	warmLeaser, supportsWarmLease := accelerator.(interface {
+		BeginWarmRun(context.Context, qs.Config) (qs.BackendSession, bool, error)
+	})
 	if warm {
 		threshold = WarmMinPaths
 	}
@@ -130,7 +133,11 @@ func selectBackend(ctx context.Context, c qs.Config, o Options, accelerator qs.R
 		s.Decision.Reason = "unsupported-model"
 		return s, nil
 	}
-	if c.Paths < threshold || c.Steps < MinSteps {
+	eligibilityThreshold := threshold
+	if supportsWarmLease {
+		eligibilityThreshold = WarmMinPaths
+	}
+	if c.Paths < eligibilityThreshold || c.Steps < MinSteps {
 		s.Decision.Reason = "below-threshold"
 		return s, nil
 	}
@@ -148,7 +155,27 @@ func selectBackend(ctx context.Context, c qs.Config, o Options, accelerator qs.R
 		s.Decision.Reason = "cuda-dimension-limit"
 		return s, nil
 	}
-	session, err := accelerator.BeginRun(ctx, effective)
+	var session qs.BackendSession
+	var err error
+	if supportsWarmLease && c.Paths < ColdMinPaths {
+		var acquiredWarm bool
+		session, acquiredWarm, err = warmLeaser.BeginWarmRun(ctx, effective)
+		if err == nil && !acquiredWarm {
+			s.Decision.Warm = false
+			s.Decision.MinCUDAPaths = ColdMinPaths
+			s.Decision.Reason = "below-threshold"
+			return s, nil
+		}
+	} else {
+		session, err = accelerator.BeginRun(ctx, effective)
+	}
+	if actual, ok := session.(interface{ WasWarm() bool }); ok {
+		s.Decision.Warm = actual.WasWarm()
+		s.Decision.MinCUDAPaths = ColdMinPaths
+		if s.Decision.Warm {
+			s.Decision.MinCUDAPaths = WarmMinPaths
+		}
+	}
 	if err == nil && session == nil {
 		return nil, fmt.Errorf("CUDA returned nil run session")
 	}

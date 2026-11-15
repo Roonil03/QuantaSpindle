@@ -42,6 +42,13 @@ func streamHelper(mode string) int {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		return 0
 	}
+	if mode == "empty-greeting" {
+		return 0
+	}
+	if mode == "partial-greeting" {
+		_, _ = os.Stdout.Write([]byte("QSPN"))
+		return 0
+	}
 	if stream {
 		_, _ = os.Stdout.Write([]byte("QSPNCS01"))
 	}
@@ -96,6 +103,18 @@ func streamHelper(mode string) int {
 		if !stream {
 			return 0
 		}
+	}
+}
+
+func TestTruncatedGreetingIsProtocolError(t *testing.T) {
+	for _, mode := range []string{"empty-greeting", "partial-greeting"} {
+		t.Run(mode, func(t *testing.T) {
+			b, cfg := fakeBackend(t, mode)
+			_, err := b.BeginRun(context.Background(), cfg)
+			if !errors.Is(err, ErrProtocol) || errors.Is(err, ErrUnavailable) {
+				t.Fatalf("greeting misclassified: %v", err)
+			}
+		})
 	}
 }
 

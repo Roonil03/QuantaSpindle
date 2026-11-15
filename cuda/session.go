@@ -39,7 +39,11 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 	if err := validateBatch(ctx, cfg, 0, min(cfg.BatchSize, cfg.Paths)); err != nil {
 		return nil, err
 	}
-	return b.startSession(ctx, ctx)
+	s, err := b.startSession(ctx, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (b *Backend) startSession(lifetime, startup context.Context) (*session, error) {
@@ -75,6 +79,9 @@ func (b *Backend) startSession(lifetime, startup context.Context) (*session, err
 	go func() {
 		var greeting [8]byte
 		_, err := io.ReadFull(s.stdout, greeting[:])
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			err = fmt.Errorf("%w: incomplete streaming greeting: %v", ErrProtocol, err)
+		}
 		if err == nil && string(greeting[:]) != "QSPNCS01" {
 			err = ErrProtocol
 		}

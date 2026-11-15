@@ -166,7 +166,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	writer := bufio.NewWriter(output)
 	encoder := json.NewEncoder(writer)
-	metadata := map[string]any{"type": "metadata", "config": cfg, "backend": backend.Name(), "precision": "float64", "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "gomaxprocs": runtime.GOMAXPROCS(0), "version": buildVersion(), "started_utc": time.Now().UTC().Format(time.RFC3339Nano)}
+	metadata := map[string]any{"type": "metadata", "config": cfg, "backend": backend.Name(), "precision": "float64", "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "gomaxprocs": runtime.GOMAXPROCS(0), "version": buildVersion(), "started_utc": started.UTC().Format(time.RFC3339Nano)}
 	metadata["requested_backend"] = *backendName
 	if selected != nil {
 		metadata["selection"] = selected.Decision

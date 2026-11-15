@@ -77,19 +77,30 @@ func (p *Prepared) Warm() bool {
 // BeginRun leases this runner exclusively until the returned session is closed.
 // Closing the lease retains the native process for the next independent Run.
 func (p *Prepared) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSession, error) {
+	lease, _, err := p.beginRun(ctx, cfg, false)
+	return lease, err
+}
+
+// BeginWarmRun atomically leases an already warm process without starting a
+// replacement. A nil lease and false indicate that no warm process is available.
+func (p *Prepared) BeginWarmRun(ctx context.Context, cfg qs.Config) (qs.BackendSession, bool, error) {
+	return p.beginRun(ctx, cfg, true)
+}
+
+func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool) (qs.BackendSession, bool, error) {
 	if err := validateBatch(ctx, cfg, 0, min(cfg.BatchSize, cfg.Paths)); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	select {
 	case p.gate <- struct{}{}:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, false, ctx.Err()
 	case <-p.ctx.Done():
-		return nil, p.ctx.Err()
+		return nil, false, p.ctx.Err()
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	fail := func(err error) (qs.BackendSession, error) { <-p.gate; return nil, err }
+	fail := func(err error) (qs.BackendSession, bool, error) { <-p.gate; return nil, false, err }
 	if p.closed {
 		return fail(fmt.Errorf("%w: prepared runner closed", ErrExecution))
 	}
@@ -98,6 +109,10 @@ func (p *Prepared) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessi
 	}
 	if err := p.ctx.Err(); err != nil {
 		return fail(err)
+	}
+	warm := p.stream != nil && !p.stream.closed && p.stream.warm.Load()
+	if warmOnly && !warm {
+		return fail(nil)
 	}
 	if p.stream == nil || p.stream.closed {
 		startup, cancel := context.WithCancel(ctx)
@@ -110,7 +125,7 @@ func (p *Prepared) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessi
 		}
 		p.stream = s
 	}
-	return &preparedLease{parent: p, stream: p.stream}, nil
+	return &preparedLease{parent: p, stream: p.stream, warm: warm}, warm, nil
 }
 
 // Batch leases the runner for one direct batch. Concurrent calls are serialized.
@@ -157,9 +172,13 @@ type preparedLease struct {
 	stream *session
 	mu     sync.RWMutex
 	closed bool
+	warm   bool
 }
 
 func (*preparedLease) Name() string { return "cuda" }
+
+// WasWarm reports the process state when this exclusive lease was acquired.
+func (s *preparedLease) WasWarm() bool { return s.warm }
 
 func (s *preparedLease) Batch(ctx context.Context, cfg qs.Config, first uint64, count int) ([]qs.Scenario, error) {
 	s.mu.RLock()

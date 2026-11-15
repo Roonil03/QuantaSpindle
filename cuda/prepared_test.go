@@ -109,6 +109,41 @@ func TestPreparedCancellationRecoversOnNextRun(t *testing.T) {
 	}
 }
 
+func TestWarmLeaseWaitsForFailureWithoutColdRestart(t *testing.T) {
+	b, cfg := fakeBackend(t, "hang-workload")
+	p, err := b.Prepare(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	active, err := p.BeginRun(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		lease qs.BackendSession
+		warm  bool
+		err   error
+	}
+	ready := make(chan result, 1)
+	go func() {
+		lease, warm, err := p.BeginWarmRun(context.Background(), cfg)
+		ready <- result{lease, warm, err}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := active.Batch(ctx, cfg, 0, 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if err := active.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := <-ready
+	if r.err != nil || r.lease != nil || r.warm || p.Warm() {
+		t.Fatalf("cold service leased as warm: %+v", r)
+	}
+}
+
 func TestPreparedCloseDoesNotWaitForAbandonedLease(t *testing.T) {
 	b, cfg := fakeBackend(t, "valid")
 	p, err := b.Prepare(context.Background())

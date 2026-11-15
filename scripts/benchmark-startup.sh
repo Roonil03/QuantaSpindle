@@ -26,6 +26,7 @@ git -c safe.directory=/work archive v0.1.1 | tar -x -C "$baseline"
   git -c safe.directory=/work diff --stat
   find . -maxdepth 3 -type f \( -name '*.go' -o -name '*.cu' -o -name 'benchmark-startup.sh' \) -not -path './local/*' -not -path './benchmarks/*' -print0 | sort -z | xargs -0 sha256sum
 } > "$out/environment.txt"
+find . -maxdepth 3 -type f \( -name '*.go' -o -name '*.cu' -o -name '*startup*.py' -o -name 'benchmark-startup.sh' \) -not -path './local/*' -not -path './benchmarks/*' -print0 | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
 nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static "$baseline/accelerators/cuda/runner.cu" -o "$out/runner-v0.1.1"
 (cd "$baseline" && go build -o "$out/qsbench-v0.1.1" ./cmd/qsbench)
 if [ "${PHASE:-measure}" = baseline-build ]; then exit 0; fi
@@ -63,3 +64,4 @@ done
 sha256sum "$out/baseline.jsonl" "$out/measure.jsonl" "$out/alternative.jsonl" > "$out/records.sha256"
 python3 scripts/check-startup-records.py "$out/baseline.jsonl" "$out/measure.jsonl" "$out/alternative.jsonl" "$trials" "$paths" > "$out/record-checks.txt"
 python3 scripts/summarize-startup.py "$out/baseline.jsonl" "$out/measure.jsonl" "$out/alternative.jsonl" > "$out/summary.jsonl"
+sha256sum -c "$out/sources.sha256" > "$out/source-checks.txt"
