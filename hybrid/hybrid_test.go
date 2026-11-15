@@ -2,14 +2,104 @@ package hybrid
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"io"
+	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	qs "github.com/Roonil03/QuantaSpindle"
 	"github.com/Roonil03/QuantaSpindle/cuda"
 )
+
+func init() {
+	mode := os.Getenv("QS_HYBRID_TEST_RUNNER")
+	if mode == "" {
+		return
+	}
+	if mode == "stall" {
+		_ = os.WriteFile(os.Getenv("QS_HYBRID_TEST_MARKER"), []byte("started"), 0600)
+		time.Sleep(time.Hour)
+		os.Exit(1)
+	}
+	_, _ = os.Stdout.Write([]byte("QSPNCS01"))
+	var request [72]byte
+	if _, err := io.ReadFull(os.Stdin, request[:]); err != nil {
+		os.Exit(1)
+	}
+	response := make([]byte, 208)
+	copy(response, "QSPNCR01")
+	binary.LittleEndian.PutUint32(response[8:], 1)
+	binary.LittleEndian.PutUint64(response[16:], 1)
+	copy(response[48:], "test")
+	binary.LittleEndian.PutUint64(response[176:], math.Float64bits(100))
+	_, _ = os.Stdout.Write(response)
+	// Exit after the first workload request, invalidating the prepared stream.
+	_, _ = io.ReadFull(os.Stdin, request[:])
+	os.Exit(1)
+}
+
+func TestCPUSelectionDoesNotWaitForRecovery(t *testing.T) {
+	t.Setenv("QS_HYBRID_TEST_RUNNER", "fail-after-probe")
+	marker := filepath.Join(t.TempDir(), "recovery-started")
+	t.Setenv("QS_HYBRID_TEST_MARKER", marker)
+	b := &cuda.Backend{Runner: os.Args[0], Timeout: 4 * time.Second}
+	p, err := b.Prepare(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if !p.Warm() {
+		t.Fatal("prepared runner should be warm")
+	}
+	c := qs.DefaultConfig()
+	c.Paths, c.BatchSize, c.Workers = 1, 1, 1
+	if _, err := p.Batch(context.Background(), c, 0, 1); err == nil {
+		t.Fatal("failure expected")
+	}
+	t.Setenv("QS_HYBRID_TEST_RUNNER", "stall")
+	recoveryCtx, cancelRecovery := context.WithCancel(context.Background())
+	defer cancelRecovery()
+	done := make(chan error, 1)
+	go func() { _, err := p.BeginRun(recoveryCtx, c); done <- err }()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("recovery did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if _, err := Select(ctx, c, Options{Prepared: p}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled selection: %v", err)
+	}
+	s, err := Select(context.Background(), c, Options{Prepared: p})
+	if err != nil || s.Decision.Reason != "below-threshold" || s.Decision.Warm {
+		t.Fatalf("CPU selection: %+v %v", s, err)
+	}
+	c.Paths = WarmMinPaths
+	s, err = Select(context.Background(), c, Options{Prepared: p})
+	if err != nil || s.Decision.Reason != "below-threshold" || s.Decision.Warm || s.Decision.MinCUDAPaths != ColdMinPaths {
+		t.Fatalf("mid-size cold selection: %+v %v", s, err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("CPU selection waited for recovery")
+	}
+	cancelRecovery()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("recovery cancellation: %v", err)
+	}
+}
 
 type fakeAccelerator struct {
 	beginErr, batchErr error

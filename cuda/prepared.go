@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	qs "github.com/Roonil03/QuantaSpindle"
 )
@@ -22,6 +23,7 @@ type Prepared struct {
 	gate     chan struct{}
 	mu       sync.Mutex
 	stream   *session
+	ready    atomic.Pointer[session]
 	closed   bool
 	once     sync.Once
 	err      error
@@ -55,6 +57,7 @@ func (b *Backend) Prepare(ctx context.Context) (*Prepared, error) {
 		_ = p.Close()
 		return nil, err
 	}
+	p.ready.Store(s)
 	return p, nil
 }
 
@@ -67,11 +70,11 @@ func (p *Prepared) Stats() Statistics { return p.owner.Stats() }
 func (p *Prepared) LastMetadata() Metadata { return p.owner.LastMetadata() }
 
 // Warm reports whether the current live process completed a successful batch.
-// It does not predict performance or reserve the process for a future Run.
+// It is a nonblocking snapshot, false during recovery or after closure; it does
+// not predict performance or reserve the process for a future Run.
 func (p *Prepared) Warm() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return !p.closed && p.ctx.Err() == nil && p.stream != nil && p.stream.warm.Load()
+	s := p.ready.Load()
+	return p.ctx.Err() == nil && s != nil && s.warm.Load()
 }
 
 // BeginRun leases this runner exclusively until the returned session is closed.
@@ -115,6 +118,7 @@ func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool) (
 		return fail(nil)
 	}
 	if p.stream == nil || p.stream.closed {
+		p.ready.Store(nil)
 		startup, cancel := context.WithCancel(ctx)
 		stop := context.AfterFunc(p.stopping, cancel)
 		s, err := p.owner.startSession(p.ctx, startup)
@@ -124,6 +128,7 @@ func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool) (
 			return fail(err)
 		}
 		p.stream = s
+		p.ready.Store(s)
 	}
 	return &preparedLease{parent: p, stream: p.stream, warm: warm}, warm, nil
 }
@@ -146,11 +151,13 @@ func (p *Prepared) Batch(ctx context.Context, cfg qs.Config, first uint64, count
 // shutdown is bounded by the streaming session's two-second kill timer.
 func (p *Prepared) Close() error {
 	p.once.Do(func() {
+		p.ready.Store(nil)
 		// Interrupt a recovery handshake before waiting for mu. Idle processes
 		// still exit on EOF, preserving their native shutdown diagnostics.
 		p.stop()
 		p.mu.Lock()
 		p.closed = true
+		p.ready.Store(nil)
 		s := p.stream
 		active := len(p.gate) != 0
 		p.mu.Unlock()

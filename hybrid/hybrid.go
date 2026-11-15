@@ -133,11 +133,7 @@ func selectBackend(ctx context.Context, c qs.Config, o Options, accelerator qs.R
 		s.Decision.Reason = "unsupported-model"
 		return s, nil
 	}
-	eligibilityThreshold := threshold
-	if supportsWarmLease {
-		eligibilityThreshold = WarmMinPaths
-	}
-	if c.Paths < eligibilityThreshold || c.Steps < MinSteps {
+	if c.Paths < threshold || c.Steps < MinSteps {
 		s.Decision.Reason = "below-threshold"
 		return s, nil
 	}
