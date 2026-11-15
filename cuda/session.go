@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	qs "github.com/Roonil03/QuantaSpindle"
@@ -29,6 +30,7 @@ type session struct {
 	err         error
 	terminalErr error
 	started     time.Time
+	warm        atomic.Bool
 }
 
 // BeginRun starts one native streaming runner for all batches in a Run. Native
@@ -37,11 +39,19 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 	if err := validateBatch(ctx, cfg, 0, min(cfg.BatchSize, cfg.Paths)); err != nil {
 		return nil, err
 	}
+	s, err := b.startSession(ctx, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (b *Backend) startSession(lifetime, startup context.Context) (*session, error) {
 	path, timeout, err := b.runner()
 	if err != nil {
 		return nil, err
 	}
-	childCtx, cancel := context.WithCancel(ctx)
+	childCtx, cancel := context.WithCancel(lifetime)
 	s := &session{owner: b, cancel: cancel, timeout: timeout, token: make(chan struct{}, 1), started: time.Now(), diagnostics: limitedBuffer{limit: 16 * 1024, truncate: true}}
 	s.command = exec.CommandContext(childCtx, path, "--stream")
 	s.command.WaitDelay = 2 * time.Second
@@ -63,12 +73,15 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 	}
 	// The greeting precedes CUDA initialization. A short bound catches old
 	// runners, which ignore --stream and wait for a one-shot request until EOF.
-	startupCtx, stop := context.WithTimeout(ctx, min(timeout, 5*time.Second))
+	startupCtx, stop := context.WithTimeout(startup, min(timeout, 5*time.Second))
 	defer stop()
 	ready := make(chan error, 1)
 	go func() {
 		var greeting [8]byte
 		_, err := io.ReadFull(s.stdout, greeting[:])
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			err = fmt.Errorf("%w: incomplete streaming greeting: %v", ErrProtocol, err)
+		}
 		if err == nil && string(greeting[:]) != "QSPNCS01" {
 			err = ErrProtocol
 		}
@@ -78,11 +91,16 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 	case err = <-ready:
 	case <-startupCtx.Done():
 		err = startupCtx.Err()
+	case <-childCtx.Done():
+		err = childCtx.Err()
 	}
 	if err != nil {
 		s.cancel()
 		_ = s.stdout.Close()
 		_ = s.finish()
+		if errors.Is(err, ErrProtocol) {
+			return nil, fmt.Errorf("%w: streaming startup greeting", ErrProtocol)
+		}
 		return nil, fmt.Errorf("%w: streaming startup: %w; rebuild the CUDA runner for --stream", ErrUnavailable, err)
 	}
 	return s, nil
@@ -91,6 +109,10 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 func (*session) Name() string { return "cuda" }
 
 func (s *session) Batch(ctx context.Context, cfg qs.Config, first uint64, count int) ([]qs.Scenario, error) {
+	return s.batch(ctx, cfg, first, count, true)
+}
+
+func (s *session) batch(ctx context.Context, cfg qs.Config, first uint64, count int, record bool) ([]qs.Scenario, error) {
 	if err := validateBatch(ctx, cfg, first, count); err != nil {
 		return nil, err
 	}
@@ -148,7 +170,10 @@ func (s *session) Batch(ctx context.Context, cfg qs.Config, first uint64, count 
 		return nil, s.terminalErr
 	}
 	metadata.WallTime = time.Since(started)
-	s.owner.record(metadata, count)
+	if record {
+		s.owner.record(metadata, count)
+	}
+	s.warm.Store(true)
 	return scenarios, nil
 }
 
@@ -163,6 +188,7 @@ func (s *session) Close() error {
 func (s *session) finish() error {
 	s.once.Do(func() {
 		s.closed = true
+		s.warm.Store(false)
 		_ = s.stdin.Close()
 		// Drain at most one trailing byte. Additional bytes violate the fixed
 		// frame contract; never buffer an untrusted stream until EOF.
@@ -185,7 +211,7 @@ func (s *session) finish() error {
 		s.cancel()
 		_ = s.stdout.Close()
 		if waitErr != nil {
-			s.err = fmt.Errorf("%w: %v: %s", ErrExecution, waitErr, strings.TrimSpace(s.diagnostics.String()))
+			s.err = executionError(waitErr, strings.TrimSpace(s.diagnostics.String()))
 		}
 		if errors.Is(readErr, ErrProtocol) {
 			s.err = errors.Join(s.err, readErr)

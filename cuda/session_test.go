@@ -42,6 +42,13 @@ func streamHelper(mode string) int {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		return 0
 	}
+	if mode == "empty-greeting" {
+		return 0
+	}
+	if mode == "partial-greeting" {
+		_, _ = os.Stdout.Write([]byte("QSPN"))
+		return 0
+	}
 	if stream {
 		_, _ = os.Stdout.Write([]byte("QSPNCS01"))
 	}
@@ -57,11 +64,15 @@ func streamHelper(mode string) int {
 		if err != nil {
 			return 2
 		}
-		if mode == "hang" {
+		if mode == "hang" || (mode == "hang-workload" && binary.LittleEndian.Uint32(request[12:]) > 1) {
 			time.Sleep(time.Hour)
 		}
 		if mode == "exit" {
 			_, _ = os.Stderr.Write([]byte("device failure"))
+			return 7
+		}
+		if mode == "unavailable" {
+			_, _ = os.Stderr.Write([]byte("quantaspindle-cuda: CUDA unavailable: no CUDA device"))
 			return 7
 		}
 		if mode == "stderr" {
@@ -92,6 +103,18 @@ func streamHelper(mode string) int {
 		if !stream {
 			return 0
 		}
+	}
+}
+
+func TestTruncatedGreetingIsProtocolError(t *testing.T) {
+	for _, mode := range []string{"empty-greeting", "partial-greeting"} {
+		t.Run(mode, func(t *testing.T) {
+			b, cfg := fakeBackend(t, mode)
+			_, err := b.BeginRun(context.Background(), cfg)
+			if !errors.Is(err, ErrProtocol) || errors.Is(err, ErrUnavailable) {
+				t.Fatalf("greeting misclassified: %v", err)
+			}
+		})
 	}
 }
 

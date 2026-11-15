@@ -202,7 +202,7 @@ func (b *Backend) oneShot(ctx context.Context, cfg quantaspindle.Config, start u
 		if !errors.As(err, &exit) {
 			return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
-		return nil, fmt.Errorf("%w: %v: %s", ErrExecution, err, strings.TrimSpace(diagnostics.String()))
+		return nil, executionError(err, strings.TrimSpace(diagnostics.String()))
 	}
 	scenarios, metadata, err := decodeResponse(output.Bytes(), cfg, start, count)
 	if err != nil {
@@ -211,6 +211,19 @@ func (b *Backend) oneShot(ctx context.Context, cfg quantaspindle.Config, start u
 	metadata.WallTime = wallTime
 	b.record(metadata, count)
 	return scenarios, nil
+}
+
+func executionError(err error, diagnostics string) error {
+	result := fmt.Errorf("%w: %v: %s", ErrExecution, err, diagnostics)
+	// Only the runner's explicit initialization marker is eligible for
+	// unavailable-device handling. Numerical and protocol errors stay fatal.
+	if strings.HasPrefix(diagnostics, "quantaspindle-cuda: CUDA unavailable:") ||
+		strings.HasPrefix(diagnostics, "quantaspindle-cuda: device enumeration:") ||
+		strings.HasPrefix(diagnostics, "quantaspindle-cuda: device selection:") ||
+		diagnostics == "quantaspindle-cuda: no CUDA device" {
+		return errors.Join(ErrUnavailable, result)
+	}
+	return result
 }
 
 func (b *Backend) record(metadata Metadata, count int) {
