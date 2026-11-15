@@ -38,3 +38,9 @@ Decision: retain QuantaSpindle as a provisional project name because the limited
 ## Publication and licensing
 
 The GitHub connector confirmed an existing private repository `Roonil03/QuantaSpindle`, so use module path `github.com/Roonil03/QuantaSpindle`. The initial checkout has no remote configured and uses an existing GPL-3.0 license. Keep the repository private as the user requested; they will decide when to make it public. Private module consumers need GitHub access and appropriate GOPRIVATE configuration. Follow the [official Go publication guide](https://go.dev/doc/modules/publishing) when visibility and release intent permit it. Public proxy indexing and pkg.go.dev visibility require reachable public source/module versions; a local test or private push does not prove public publication. Native CUDA tooling and runtime dependencies should be documented independently from the portable module. Seek a targeted license review before changing the existing project license or redistributing bundled vendor components.
+
+## Public follow-up on 2026-11-15
+
+After the owner changed repository visibility, unauthenticated Go proxy fetching and the [v0.1.0 package page](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.0) were verified. This supplements the earlier private planning record; the v0.1.0 tag was not moved.
+
+The connected GitHub repository search `QuantaSpindle in:name` returned this repository only. Direct requests to the official [npm endpoint](https://registry.npmjs.org/quantaspindle), [PyPI endpoint](https://pypi.org/pypi/quantaspindle/json), and [crates.io endpoint](https://crates.io/api/v1/crates/quantaspindle) each returned HTTP 404. These checks improve the exact-name record but do not establish reservation rights, similar-name availability, or legal clearance. The earlier limits on interactive trademark searches remain. The project name remains provisional pending that broader review.
