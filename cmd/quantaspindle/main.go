@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	qs "github.com/Roonil03/QuantaSpindle"
@@ -65,6 +66,19 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		if len(data) > 4<<20 || len(trimmed) == 0 || trimmed[0] != '{' {
 			_ = f.Close()
 			return errors.New("config must be a JSON object no larger than 4 MiB")
+		}
+		// A supplied array replaces the defaults. Clear its existing backing
+		// slice so json.Decoder cannot reuse a populated default asset element.
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("config: %w", err)
+		}
+		for name := range fields {
+			if strings.EqualFold(name, "Assets") {
+				cfg.Assets = nil
+				break
+			}
 		}
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()

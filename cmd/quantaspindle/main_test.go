@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	qs "github.com/Roonil03/QuantaSpindle"
 )
 
 func TestCLIStreamsOrderedRecords(t *testing.T) {
@@ -40,6 +42,37 @@ func TestCLIStreamsOrderedRecords(t *testing.T) {
 		if s.ID != uint64(i) {
 			t.Fatal("out of order", s.ID)
 		}
+	}
+}
+
+func TestCLIExplicitAssetsReplaceDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	data := `{"assets":[{"InitialPrice":50,"Sigma":0},{"InitialPrice":50,"Sigma":0}]}`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := execute(context.Background(), []string{"-config", path, "-paths", "1", "-steps", "1", "-dt", "1"}, &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(&output)
+	var metadata struct {
+		Config qs.Config `json:"config"`
+	}
+	var record struct {
+		Scenario qs.Scenario `json:"scenario"`
+	}
+	if err := decoder.Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata.Config.Assets) != 2 || metadata.Config.Assets[0].Mu != 0 || metadata.Config.Assets[1].Mu != 0 {
+		t.Fatalf("unexpected model provenance: %+v", metadata.Config.Assets)
+	}
+	if len(record.Scenario.FinalPrices) != 2 || record.Scenario.FinalPrices[0] != 50 || record.Scenario.FinalPrices[1] != 50 {
+		t.Fatalf("identical assets diverged: %+v", record.Scenario.FinalPrices)
 	}
 }
 
