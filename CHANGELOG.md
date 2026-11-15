@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Documentation and publication verification
+
+- Updated installation instructions for the public repository and verified an unauthenticated v0.1.0 download through the public Go proxy on 2026-11-15.
+- Verified the versioned pkg.go.dev API documentation and added its working reference badge.
+- Enabled and verified GitHub private vulnerability reporting, and documented its private reporting URL.
+- Recorded that Go Report Card has retired; no grade or badge is claimed.
+
 ## v0.1.0 - 2026-11-15
 
 ### Added

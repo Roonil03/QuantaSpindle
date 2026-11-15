@@ -71,6 +71,18 @@ The same CPU image ran `go test -pgo=off -run '^$' -bench 'BenchmarkRun/workers=
 
 PGO off measured median 4.336 ms/op, range 4.154 to 4.620. PGO on measured median 3.939 ms/op, range 3.784 to 5.729. These sequential samples overlap and had different host conditions from the earlier baseline, so they do not establish a stable improvement. PGO is not enabled by default. Reproduce both commands with a newly collected representative profile rather than assuming these values transfer. Raw outputs and profile remain local at `benchmarks/generated/pgo-off.txt`, `benchmarks/generated/pgo-on.txt`, and `profiles/cpu.prof`; `scripts/benchmark-cpu.sh` regenerates the profile.
 
-## Release status
+## Initial private release preparation
 
 The v0.1.0 private tag and release are planned after release review and CI pass; they must point to the reviewed merge commit. The repository remains private under the owner's instruction. An authenticated clean private consumer successfully ran `go mod download` for commit `19779c16763ee0ad705ba7c2697e01cb9c97f1da`. GitHub Actions CPU checks passed on that delivery commit (run 43687073691). Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending until visibility and subsequent validation permit them. The authenticated private-vulnerability-reporting endpoint returned 404 on 2026-11-15, so no private reporting route is advertised. No public indexing request or visibility change is authorized by the local checks.
+
+## Public publication follow-up — 2026-11-15
+
+The owner subsequently made [Roonil03/QuantaSpindle](https://github.com/Roonil03/QuantaSpindle) public. GitHub reports public visibility and detects the existing license as GPL-3.0. This supersedes the visibility and reporting-route status in the historical preparation record above. The v0.1.0 tag remains at commit `3ffad625663d2ec24a54de6aabc41252491c9210`; it was not moved for this documentation follow-up, and no new version was cut.
+
+A fresh consumer downloaded `github.com/Roonil03/QuantaSpindle@v0.1.0` without authentication, using `GOPROXY=https://proxy.golang.org`, an isolated `GOMODCACHE=local/public-consumer-cache`, and empty `GOPRIVATE` and `GONOSUMDB`. The download succeeded and reported origin commit `3ffad625663d2ec24a54de6aabc41252491c9210` and module checksum `h1:AKKiG8Vv3fphJDgM/YU+3PM+Q1TIKzqcbLzzv4TQUII=`. This verifies public proxy retrieval of the tagged source; it does not add model calibration or production validation.
+
+An indexing POST to `https://pkg.go.dev/fetch/github.com/Roonil03/QuantaSpindle@v0.1.0` returned HTTP 200. A subsequent GET of the [versioned package page](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.0) returned HTTP 200 and displayed the package documentation, version v0.1.0 and license GPL-3.0. The [reference badge](https://pkg.go.dev/badge/github.com/Roonil03/QuantaSpindle.svg) also returned HTTP 200 with valid SVG. The README now links to the verified documentation.
+
+GitHub private vulnerability reporting was enabled through the repository API; a subsequent GET confirmed it is enabled. [SECURITY.md](../SECURITY.md) now links to the [private advisory reporting route](https://github.com/Roonil03/QuantaSpindle/security/advisories/new). No response-time or supported-version policy was added.
+
+The Go Report Card project URL returned HTTP 200 with the title `Go Report Card | Thank you` and a service-retirement message; the [official service homepage](https://goreportcard.com/) independently confirmed retirement. It is not an active project assessment, so no grade or badge is claimed. Authoritative registry/name checks and trademark clearance remain outside these publication checks.

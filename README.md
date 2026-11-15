@@ -3,10 +3,11 @@
 ![License: GPL version 3](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Go version](https://img.shields.io/badge/Go-1.27.1-00ADD8)
 [![Checks](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml/badge.svg)](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Roonil03/QuantaSpindle.svg)](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.0)
 
 QuantaSpindle is a Go library and CLI for reproducible synthetic financial market scenarios. Go runs bounded batches on the CPU and coordinates an optional native CUDA runner. CUDA kernels execute GPU work. Goroutines run on the host.
 
-v0.1.0 is the initial private release. It is independent of the conceptual stock-simulations reference. Its GitHub repository is currently private. Public Go module fetching, pkg.go.dev indexing, and service status badges are pending verification. pkg.go.dev indexes fetchable modules; it is not a separate upload service.
+v0.1.0 is the initial release. QuantaSpindle is independent of the conceptual stock-simulations reference. Its [GitHub repository](https://github.com/Roonil03/QuantaSpindle) is public. An unauthenticated download of v0.1.0 through the public Go proxy and its [published API documentation](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.0) were verified on 2026-11-15. pkg.go.dev indexes fetchable modules; it is not a separate upload service.
 
 ## Models and limits
 
@@ -24,7 +25,20 @@ Each scenario reports final prices, simple returns, annualized sample volatility
 
 Use the official Go 1.27.1 toolchain or a later supported release. There are no external Go module dependencies. CPU-only builds need no CUDA, C compiler, logger, or database.
 
-While the repository is private, configure GitHub credentials with repository access and set `GOPRIVATE=github.com/Roonil03/QuantaSpindle` before fetching it. In a Go module, install the private version with `go get github.com/Roonil03/QuantaSpindle@v0.1.0`. From an authenticated checkout:
+Install the library in your Go module:
+
+```sh
+go get github.com/Roonil03/QuantaSpindle@v0.1.0
+```
+
+Install and run the CLI:
+
+```sh
+go install github.com/Roonil03/QuantaSpindle/cmd/quantaspindle@v0.1.0
+quantaspindle -paths 10000 -steps 252 -seed 42 -workers 4 -batch 128 -summary-only
+```
+
+The public module requires no GitHub credentials or `GOPRIVATE` setting. From a checkout:
 
 ```sh
 go test ./...
@@ -122,7 +136,7 @@ A separate matched CPU/CUDA experiment used one worker, one batch, the same mode
 
 This runner did not beat the CPU's median full execution time on these cases. Kernel time alone excludes substantial work. These measurements do not establish performance on larger workloads, dedicated hardware, or a persistent GPU runner. The local image identity and its availability limit are in the validation report.
 
-Measured results, trial counts, memory allocations, configuration, environment, commit identities, and limitations are recorded in [validation](docs/validation.md) and [benchmark reproduction](docs/benchmarks.md). No GPU speedup, calibrated financial accuracy, or production-readiness claim is made. CPU, CUDA, and FPGA results must stay separate.
+Measured results, trial counts, memory allocations, configuration, environment, commit identities, and limitations are recorded in [validation](docs/validation.md) and [benchmark reproduction](docs/benchmarks.md). No GPU speedup, calibrated financial accuracy, or production-readiness claim is made. CPU, CUDA, and FPGA results must stay separate. [Go Report Card](https://goreportcard.com/) has retired, so no report or grade badge is available.
 
 ## Project records
 
