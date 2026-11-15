@@ -11,6 +11,11 @@
 // Runner may instead be selected through QS_CUDA_RUNNER,
 // QUANTASPINDLE_CUDA_RUNNER, or PATH. Only select a trusted executable.
 //
+// Calling [Backend.Prepare] initializes one GPU process for repeated runs.
+// Pass the returned [Prepared] to quantaspindle.Run for explicit CUDA or to
+// the hybrid subpackage for automatic selection. Close it when the service
+// stops. Its context must live as long as the service.
+//
 // CUDA replay is scoped to the same runner build, device and toolchain. The
 // Philox seed/scenario-ID mapping differs from the CPU generator, so compare
 // distributions rather than paths across backends. Stats separates successful
@@ -19,8 +24,7 @@
 // complete caller latency; Go allocation counts exclude native/device memory.
 // See the repository CUDA guide and performance report for build commands,
 // protocol, actual measurements, and their limits:
-// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.1/docs/cuda.md and
-// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.1/docs/cuda-performance.md.
+// https://github.com/Roonil03/QuantaSpindle/blob/main/docs/cuda.md.
 package cuda
 
 import (
