@@ -31,6 +31,7 @@ func run() error {
 	paths := flag.String("paths", "", "comma-separated total scenario counts; permits multi-batch Runs")
 	workers := flag.String("workers", "1", "comma-separated CPU worker counts; CUDA uses one worker")
 	cpuBatch := flag.Int("cpu-batch", 0, "optional CPU batch size override for parallel utilization")
+	cpuBatches := flag.String("cpu-batches", "", "optional comma-separated CPU batch sizes to sweep; overrides cpu-batch")
 	steps := flag.Int("steps", 252, "steps per scenario")
 	trials := flag.Int("trials", 5, "measured trials after one warm-up per batch size")
 	flag.Parse()
@@ -55,6 +56,13 @@ func run() error {
 	if *cpuBatch < 0 {
 		return fmt.Errorf("cpu-batch must be nonnegative")
 	}
+	var cpuBatchSizes []int
+	if *cpuBatches != "" {
+		cpuBatchSizes, err = positiveInts(*cpuBatches)
+		if err != nil {
+			return err
+		}
+	}
 	type benchmarkCase struct {
 		mode   string
 		config qs.Config
@@ -75,15 +83,23 @@ func run() error {
 					ws = workerCounts
 				}
 				for _, worker := range ws {
-					cfg := qs.DefaultConfig()
-					cfg.Paths, cfg.BatchSize, cfg.Workers, cfg.Steps = count, batch, worker, *steps
-					if mode == "cpu" && *cpuBatch > 0 {
-						cfg.BatchSize = *cpuBatch
+					sizes := []int{batch}
+					if mode == "cpu" {
+						if *cpuBatch > 0 {
+							sizes = []int{*cpuBatch}
+						}
+						if len(cpuBatchSizes) > 0 {
+							sizes = cpuBatchSizes
+						}
 					}
-					if err := cfg.Validate(); err != nil {
-						return err
+					for _, size := range sizes {
+						cfg := qs.DefaultConfig()
+						cfg.Paths, cfg.BatchSize, cfg.Workers, cfg.Steps = count, size, worker, *steps
+						if err := cfg.Validate(); err != nil {
+							return err
+						}
+						cases = append(cases, benchmarkCase{mode, cfg})
 					}
-					cases = append(cases, benchmarkCase{mode, cfg})
 				}
 			}
 		}

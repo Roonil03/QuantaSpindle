@@ -27,8 +27,8 @@ type session struct {
 	once        sync.Once
 	closed      bool
 	err         error
+	terminalErr error
 	started     time.Time
-	batchWall   time.Duration
 }
 
 // BeginRun starts one native streaming runner for all batches in a Run. Native
@@ -101,6 +101,9 @@ func (s *session) Batch(ctx context.Context, cfg qs.Config, first uint64, count 
 		return nil, ctx.Err()
 	}
 	if s.closed {
+		if s.terminalErr != nil {
+			return nil, s.terminalErr
+		}
 		return nil, fmt.Errorf("%w: session closed", ErrExecution)
 	}
 	childCtx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -130,25 +133,27 @@ func (s *session) Batch(ctx context.Context, cfg qs.Config, first uint64, count 
 		_ = s.stdout.Close()
 		closeErr := s.finish()
 		if childCtx.Err() != nil {
-			return nil, childCtx.Err()
+			s.terminalErr = childCtx.Err()
+		} else {
+			s.terminalErr = errors.Join(fmt.Errorf("%w: streaming exchange: %v", ErrExecution, err), closeErr)
 		}
-		return nil, errors.Join(fmt.Errorf("%w: streaming exchange: %v", ErrExecution, err), closeErr)
+		return nil, s.terminalErr
 	}
 	scenarios, metadata, err := decodeResponse(response, cfg, first, count)
 	if err != nil {
 		s.cancel()
 		_ = s.stdout.Close()
 		_ = s.finish()
-		return nil, err
+		s.terminalErr = err
+		return nil, s.terminalErr
 	}
 	metadata.WallTime = time.Since(started)
-	s.batchWall += metadata.WallTime
 	s.owner.record(metadata, count)
 	return scenarios, nil
 }
 
 // Close waits for graceful EOF shutdown, then kills a stuck child after two
-// seconds. It is idempotent and includes process startup/teardown in Stats.
+// seconds. It is idempotent and records the complete session lifetime in Stats.
 func (s *session) Close() error {
 	s.token <- struct{}{}
 	defer func() { <-s.token }()
@@ -186,7 +191,7 @@ func (s *session) finish() error {
 			s.err = errors.Join(s.err, readErr)
 		}
 		s.owner.mu.Lock()
-		s.owner.stats.WallTime += time.Since(s.started) - s.batchWall
+		s.owner.stats.SessionLifetime += time.Since(s.started)
 		s.owner.mu.Unlock()
 	})
 	return s.err

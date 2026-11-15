@@ -40,7 +40,8 @@ var (
 
 // Metadata describes the actual device and timing of the last successful batch.
 // KernelTime excludes transfers and startup; HostTime is measured inside the
-// runner through output transfer. WallTime includes process execution and I/O.
+// runner through output transfer. WallTime covers the successful one-shot
+// process invocation, or the successful streaming request/response exchange.
 type Metadata struct {
 	Device          string
 	RuntimeVersion  int
@@ -77,15 +78,18 @@ func (b *Backend) LastMetadata() Metadata {
 	return b.metadata
 }
 
-// Statistics aggregates successful batch timings since this Backend was created.
-// Timings sum concurrent batches and therefore need not equal elapsed run time.
+// Statistics aggregates successful batches since this Backend was created.
+// KernelTime, HostTime and WallTime sum successful batch timings. SessionLifetime
+// sums streaming process lifetimes, including startup, idle/sink time, teardown
+// and failed sessions. Concurrent durations are summed, not elapsed run time.
 type Statistics struct {
-	Batches    uint64
-	Scenarios  uint64
-	KernelTime time.Duration
-	HostTime   time.Duration
-	WallTime   time.Duration
-	Last       Metadata
+	Batches         uint64
+	Scenarios       uint64
+	KernelTime      time.Duration
+	HostTime        time.Duration
+	WallTime        time.Duration
+	SessionLifetime time.Duration
+	Last            Metadata
 }
 
 // Stats returns a synchronized snapshot of cumulative successful batch metadata.

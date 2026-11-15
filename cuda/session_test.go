@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,6 +112,7 @@ func TestRunUsesOneProcessAndPreservesBatchResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := b.Stats()
 	var got []qs.Scenario
 	started := time.Now()
 	summary, err := qs.Run(context.Background(), cfg, b, func(s qs.Scenario) error { got = append(got, s); return nil })
@@ -123,8 +125,50 @@ func TestRunUsesOneProcessAndPreservesBatchResults(t *testing.T) {
 		t.Fatalf("expected exactly one process per Run plus direct Batch: %q %v", data, err)
 	}
 	stats := b.Stats()
-	if stats.Batches != 5 || stats.Scenarios != 14 || stats.WallTime <= 0 || stats.WallTime > elapsed+time.Second {
+	if stats.Batches != 5 || stats.Scenarios != 14 || stats.WallTime < before.WallTime || stats.WallTime-before.WallTime > elapsed || stats.SessionLifetime <= 0 || stats.SessionLifetime > elapsed {
 		t.Fatalf("stats: %+v", stats)
+	}
+}
+
+func TestRunPreservesQueuedSessionFailure(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want error
+	}{{"malformed", ErrProtocol}, {"hang", context.DeadlineExceeded}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			b, cfg := fakeBackend(t, tc.mode)
+			cfg.Paths, cfg.BatchSize, cfg.Workers = 16, 1, 16
+			if tc.mode == "hang" {
+				b.Timeout = 2 * time.Second
+			}
+			_, err := qs.Run(context.Background(), cfg, b, nil)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("lost session failure %v: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestSessionLifetimeExcludesIdleFromBatchWall(t *testing.T) {
+	b, cfg := fakeBackend(t, "valid")
+	scoped, err := b.BeginRun(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := scoped.Batch(context.Background(), cfg, uint64(i), 1); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if err := scoped.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stats := b.Stats()
+	if stats.Batches != 2 || stats.SessionLifetime-stats.WallTime < 100*time.Millisecond {
+		t.Fatalf("idle time included in batch timings: %+v", stats)
 	}
 }
 
@@ -213,4 +257,21 @@ func TestCUDAStreamingIntegration(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("native streaming replay differs: %v", err)
 	}
+	// Reuse the same Backend from independent overlapping runs, with different
+	// partitions. Both sessions must preserve exact scenario streams.
+	var wg sync.WaitGroup
+	for _, size := range []int{37, 101} {
+		wg.Add(1)
+		go func(size int) {
+			defer wg.Done()
+			partitioned := cfg
+			partitioned.BatchSize = size
+			var replay []qs.Scenario
+			_, err := qs.Run(context.Background(), partitioned, b, func(s qs.Scenario) error { replay = append(replay, s); return nil })
+			if err != nil || !reflect.DeepEqual(replay, want) {
+				t.Errorf("concurrent native replay batch=%d differs: %v", size, err)
+			}
+		}(size)
+	}
+	wg.Wait()
 }

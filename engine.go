@@ -219,6 +219,9 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 		if err != nil {
 			return summary, err
 		}
+		if session == nil {
+			return summary, fmt.Errorf("backend returned nil run session")
+		}
 		defer func() { runErr = errors.Join(runErr, session.Close()) }()
 		backend = session
 	}

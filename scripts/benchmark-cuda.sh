@@ -21,7 +21,7 @@ paths=${PATHS_LIST:-256,4096,16384,262144,524288}
   cat /proc/meminfo
   cat /proc/cpuinfo
   nvidia-smi
-  git -c safe.directory=/work rev-parse HEAD HEAD^{tree} v0.1.0 v0.1.0^{tree}
+  git -c safe.directory=/work rev-parse HEAD HEAD^{tree} v0.1.0^{commit} v0.1.0^{tree}
   git -c safe.directory=/work diff --stat
   sha256sum engine.go cuda/*.go accelerators/cuda/runner.cu cmd/qsbench/main.go scripts/benchmark-cuda.sh
 } > "$out/environment-$phase.txt"
@@ -37,7 +37,7 @@ if [ "$phase" != baseline ]; then
 fi
 local/linux/qsbench -backend "$backends" -cuda-runner /work/local/linux/quantaspindle-cuda \
   -cuda-batch-runner /work/local/linux/quantaspindle-cuda-v0.1.0 \
-  -paths "$paths" -batches 16384 -cpu-batch 1024 -workers 1,4,8,16 -trials "$trials" > "$out/$phase.jsonl"
+  -paths "$paths" -batches 16384 -cpu-batches 128,1024 -workers 1,4,8,16 -trials "$trials" > "$out/$phase.jsonl"
 sha256sum local/linux/qsbench local/linux/quantaspindle-cuda* > "$out/binaries-$phase.sha256"
 {
   date -u
