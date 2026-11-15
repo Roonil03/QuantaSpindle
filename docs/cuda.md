@@ -41,11 +41,12 @@ to an ordinary writable build directory before invoking the build script.
 
 ```go
 cfg := quantaspindle.DefaultConfig()
-cfg.Workers = 1 // avoid concurrent short-lived GPU processes initially
+cfg.Workers = 1 // one serialized CUDA session per Run
 cfg.BatchSize = 16384
 backend := &cuda.Backend{Runner: "/absolute/path/to/quantaspindle-cuda"}
 summary, err := quantaspindle.Run(ctx, cfg, backend, nil)
-// Handle err before using summary. backend.Stats() records successful batches.
+// Handle err before using summary. Run closes its owned session before returning.
+// backend.Stats() records timings; measure the whole Run for full latency.
 ```
 
 The complete import paths are `github.com/Roonil03/QuantaSpindle` and
@@ -57,13 +58,15 @@ malformed output returns `ErrProtocol`. The optional hardware tests skip unless
 one of the runner environment variables is set. Once selected, missing hardware
 or a failing runner fails the tests explicitly.
 
-One process handles one batch and exits. The adapter uses `exec.CommandContext`,
-enforces the caller's cancellation and a default five-minute batch timeout,
-and bounds stdout to exactly the expected response size and retained stderr to
-16 KiB. `Backend.Timeout` can set a different positive timeout. A failed or
-canceled batch returns no partial scenarios. `Run` may already have delivered an
-earlier successful prefix, as described in the core API. Each batch validates
-configuration before resolving or launching the runner.
+## Per-run process and resource lifecycle (v0.1.1)
+
+- `Run` detects the optional `quantaspindle.RunBackend` interface and calls `BeginRun(context.Context, Config) (BackendSession, error)`. A `BackendSession` implements `Backend` and `Close() error`. `Run` owns and closes that session on success and every error path.
+- CUDA starts one native child with `--stream` per run. Its batches are serialized over one binary stream, and the child retains its CUDA device state, events, and output buffers between requests. Separate runs own separate sessions; there is no global pool or reuse across runs.
+- Direct `cuda.Backend.Batch` calls preserve the v1 one-shot interface: one process handles one batch and exits. Existing custom backends that implement only `Backend` keep their original lifecycle.
+- Worker count still controls Go scheduling and bounded waves. Multiple workers in one CUDA run queue on the same session; they do not create concurrent kernels. Start with one worker and benchmark the intended batch and scenario counts.
+- The stream greeting is bounded by five seconds, or a shorter configured timeout. An older one-shot-only runner is rejected with a rebuild requirement; rebuild the runner together with the Go adapter.
+- `Backend.Timeout` bounds each request/response exchange, defaulting to five minutes. Caller cancellation terminates the child. Requests waiting for the session and active work remain subject to cancellation. The whole-run CLI timeout also bounds the run.
+- Each response has its exact expected size; retained stderr is bounded to 16 KiB. A failed or canceled batch returns no partial scenarios. `Run` may already have delivered an earlier successful prefix. Failed runs return an error and cannot report a successful final summary.
 
 ## Mathematics, memory and replay
 
@@ -77,14 +80,15 @@ equivalence of transcendental functions.
 
 One GPU thread owns one scenario. All intermediate prices, running volatility
 state, peak and drawdown remain on device; a path is never copied to the host.
-Output is four FP64 values (32 bytes) per scenario. Device output storage is
+Output is four FP64 values (32 bytes) per scenario. Session output buffers are reused between batches. Device output storage is
 O(batch size), independent of step count, and live scalar state is per thread.
 The host holds one compact native result vector plus the Go response and
 independently owned public Scenario slices. Runner limits are 1,000,000
-scenarios, 1,000,000 steps and 10,000,000,000 updates per process; core Config/Run
+scenarios, 1,000,000 steps and 10,000,000,000 updates per request; core Config/Run
 limits may be smaller. Both peers check dimensions and numeric inputs; the
-native host also checks multiplication overflow, complete stdin and trailing
-bytes before allocating or launching work.
+native host also checks multiplication overflow and complete request frames before
+allocating or launching work. The one-shot interface additionally rejects trailing
+input; the stream interface expects another complete request or clean EOF.
 
 The generator is cuRAND device `Philox4_32_10`, initialized as
 `curand_init(config.Seed, scenario.ID, 0, &state)`. `curand_normal_double` supplies
@@ -105,25 +109,15 @@ replay version; it must not silently change that contract.
 
 ## Timing and validation
 
-The corrected runner also passed the conditional suite in a GPU-enabled Ubuntu 22.04.4 container with nvcc 12.4.131, GCC 11.4.0, Go 1.27.1, runtime API 12040, and driver API 13050 on the same RTX 3060 Laptop GPU. Native Windows used CUDA 13.2.51 and MSVC 14.42. These are separate tested environments, not a claim of support for every toolkit in between. Container measurements and the local-image availability limit are recorded in [validation](validation.md) and [reproduction](benchmarks.md).
+The historical v0.1.0 runner passed the conditional suite in a GPU-enabled Ubuntu 22.04.4 container with nvcc 12.4.131, GCC 11.4.0, Go 1.27.1, runtime API 12040, and driver API 13050 on the same RTX 3060 Laptop GPU. Native Windows used CUDA 13.2.51 and MSVC 14.42. These are separate tested environments, not a claim of support for every toolkit in between. Container measurements and the local-image availability limit are recorded in [validation](validation.md) and [reproduction](benchmarks.md).
 
-`LastMetadata()` identifies the actual GPU, CUDA runtime and driver API versions,
-generator and binary protocol. `KernelTime` comes from CUDA events around kernel
-execution. `HostTime` is runner wall time from request reading through device
-output transfer, excluding final response serialization and teardown.
-`WallTime` is measured by Go around process execution, including startup,
-allocation, transfers, serialization and teardown. It excludes Go request
-encoding and response decoding. `Stats()` sums these times across successful
-batches and returns the last device metadata. Concurrent batch totals are sums,
-not elapsed run time. Measure the caller's whole `Run` separately for complete
-end-to-end comparison. Compilation is always separate.
+- `LastMetadata()` identifies the GPU, CUDA runtime/driver API versions, generator, and binary protocol of the last successful batch.
+- `KernelTime` uses CUDA events around the kernel; it excludes setup, transfers, and Go work.
+- `HostTime` records native service from the completed request frame through device output transfer, in both modes. It excludes process startup, request-read wait and Go sink time. CUDA initialization is included only when it occurs during that batch's service.
+- `Stats()` sums successful batch timings. `WallTime` is the one-shot process invocation or streaming request/response exchange; `SessionLifetime` separately sums complete streaming session lifetimes, including startup, idle/sink time, teardown and failed sessions. Inspect session totals after `Run` returns. Concurrent durations are summed, so they are not necessarily elapsed run time.
+- Time the caller's complete `Run` for an end-to-end comparison: Go setup, process startup, device initialization, batches, transfers, decoding, aggregation, and close all count. Compilation and output JSON encoding are separate.
 
-The process boundary, context initialization, allocation and output transfer
-can dominate small batches. No GPU speedup is implied by successful execution.
-Use identical scenario counts, steps and output requirements and disclose CPU
-workers, GPU batch size, precision, warmup policy and all timing boundaries for
-comparisons. This version favors an explicit maintained process boundary; it
-does not maintain a persistent CUDA context or pool.
+Process startup still contributes once per run. The historical v0.1.0 one-shot runner did not beat CPU median full execution time at the measured batch sizes. The [v0.1.1 performance report](cuda-performance.md) records the separate lifecycle experiment; successful kernel execution alone is not evidence of speedup. Compare identical models, scenario counts, steps, precision, and output requirements, and disclose workers, batch size, warm-up policy, and timing boundaries.
 
 Hardware tests cover actual device execution; same-backend repeatability and
 batch partition; analytical GBM terminal mean and variance; CPU/GPU distribution
@@ -139,9 +133,9 @@ redistribute the toolkit libraries. The build currently links the CUDA runtime
 statically, so distributing a compiled runner requires separately checking the
 applicable NVIDIA redistribution terms and license obligations.
 
-## Binary protocol v1
+## Binary protocol v1 and stream framing
 
-All integers and IEEE-754 binary64 values are little-endian. Stdin is exactly
+All integers and IEEE-754 binary64 values are little-endian. The one-shot interface accepts exactly
 72 bytes followed by EOF. Fields are: magic `QSPNCU01` at offset 0 (8 bytes),
 version uint32 at 8, steps uint32 at 12, count uint64 at 16, starting scenario ID
 uint64 at 24, config seed uint64 at 32, initial price double at 40, mu double at
@@ -155,5 +149,9 @@ name bytes at 48 through 175. Each of the following count records has four
 doubles: terminal price, simple return, realized volatility and maximum
 drawdown. No record includes the ID; record i belongs to start+i. There are no
 trailing bytes. Validation or device errors produce a nonzero process exit,
-diagnostics on stderr, and no successful response. The Go caller checks exit
-status before parsing any response.
+diagnostics on stderr, and no successful response for the failed request. The
+one-shot Go caller checks process exit status before parsing output. A stream
+may already have delivered earlier complete responses; the session checks each
+response and reports process/close failures.
+
+In `--stream` mode the child first writes the eight-byte greeting `QSPNCS01`, before CUDA initialization. It then accepts repeated 72-byte v1 requests and writes one complete v1 response per successful request. Clean EOF between requests ends the session; truncated requests fail. Request/response payloads and the Philox scenario-ID mapping remain v1. The greeting identifies the streaming capability and prevents silently using a stale runner.

@@ -1,6 +1,6 @@
 # QuantaSpindle design review
 
-Recorded: 2026-11-15. Status: foundation design approved for implementation within the boundaries below. This records decisions before implementation, rather than claiming completed features or measured performance. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
+Recorded: 2026-11-15. The foundation review below preserves the original design decisions, including historical private-release assumptions. Current implementation, measured results, and public publication status are recorded in [validation](validation.md). The v0.1.1 amendment below supersedes the original per-batch process design. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
 
 ## Scope and independent origin
 
@@ -52,7 +52,7 @@ CUDA gates additionally require runner compilation, actual GPU execution, determ
 
 Environment observed on 2026-11-15: Windows, Go 1.27.1, CUDA 13.2, NVIDIA RTX 3060 Laptop GPU and driver 621.24; CGO_ENABLED=0 and no GCC. Initial Docker daemon pipe access was denied; a permitted elevated host invocation subsequently pulled the pinned Go 1.27.1 image with digest `sha256:8d48e12ec56735e9358640898b9d9b9fcca110612ed8a5567438c0a1baa24e66`. These observations are not portability guarantees. No FPGA board is available: provide an extension contract and future validation requirements only; do not claim an FPGA implementation, synthesis result or measured speedup.
 
-On 2026-11-15 the GitHub connector confirmed the existing private repository `Roonil03/QuantaSpindle` on main. Use module path `github.com/Roonil03/QuantaSpindle`. The initial checkout had no Git remote; origin is now configured. The user wants to keep the repository private until they change visibility themselves. Private consumers need repository access and an appropriate GOPRIVATE configuration. Before any public release, verify an external consumer and follow [Go's module publication process](https://go.dev/doc/modules/publishing): tested commit, semantic version tag, push, and proxy/index verification after visibility permits it. Maintain GPL-3.0 notices and record backend/toolchain limits in release notes. The foundation branch requested by the user is `Foundations`; public publication or trademark registration is not implied by this review.
+Historical foundation publication assumptions (superseded by the public publication follow-up in validation.md): on 2026-11-15 the GitHub connector confirmed the existing private repository `Roonil03/QuantaSpindle` on main. Use module path `github.com/Roonil03/QuantaSpindle`. The initial checkout had no Git remote; origin is now configured. The user wants to keep the repository private until they change visibility themselves. Private consumers need repository access and an appropriate GOPRIVATE configuration. Before any public release, verify an external consumer and follow [Go's module publication process](https://go.dev/doc/modules/publishing): tested commit, semantic version tag, push, and proxy/index verification after visibility permits it. Maintain GPL-3.0 notices and record backend/toolchain limits in release notes. The foundation branch requested by the user is `Foundations`; public publication or trademark registration is not implied by this review.
 
 ## Phases and model choices
 
@@ -63,3 +63,11 @@ On 2026-11-15 the GitHub connector confirmed the existing private repository `Ro
 ## Review outcome
 
 Proceed with the CPU foundation and narrowly scoped real CUDA runner. The principal risks are finite-sample tail uncertainty, user calibration/units, replay contracts, allocation growth, and native backend portability/startup overhead. Each has an explicit contract or validation gate above. Broader CUDA feature parity, calibration, advanced stochastic models, persistent GPU execution and FPGA execution remain future work until implemented and tested.
+
+## v0.1.1 CUDA lifecycle amendment
+
+- `RunBackend.BeginRun` optionally opens an owned `BackendSession`; `Run` closes it on success, cancellation, and errors. Existing backends that implement only `Backend` keep their previous behavior.
+- The CUDA session starts one `--stream` child per run, serializes its batch exchanges, and reuses device resources. Direct `cuda.Backend.Batch` calls retain the v1 one-shot process path. This boundary keeps CUDA and cgo optional for ordinary Go builds.
+- Queueing multiple Go workers does not execute concurrent kernels in one session. Start with one worker and measure the intended workload, including startup and teardown.
+- The model, FP64 precision, scenario ID mapping, replay scope, bounded output, error propagation, and explicit CUDA capability rejection remain release contracts. Optimization must pass the analytical and protocol checks before any performance claim.
+- The original v0.1.0 source/tag and its historical measurements are immutable. Follow-up experiments belong to v0.1.1 and are recorded separately in [CUDA performance](cuda-performance.md).
