@@ -100,6 +100,8 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdin), _O_BINARY); _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
     try {
         bool streaming = argc == 2 && std::strcmp(argv[1], "--stream") == 0;
         if (argc != 1 && !streaming) throw std::runtime_error("usage: quantaspindle-cuda [--stream]");
@@ -132,6 +134,7 @@ int main(int argc, char** argv) {
                 !std::isfinite((mu-0.5*sigma*sigma)*dt) || !std::isfinite(sigma*std::sqrt(dt)))
                 throw std::runtime_error("invalid numeric inputs");
             if (!initialized) {
+              try {
                 check(cudaGetDeviceCount(&device_count),"device enumeration");
                 if (device_count < 1) throw std::runtime_error("no CUDA device");
                 check(cudaSetDevice(device),"device selection");
@@ -140,6 +143,9 @@ int main(int argc, char** argv) {
                 check(cudaDriverGetVersion(&driver_version),"driver version");
                 resources.initialize();
                 initialized = true;
+              } catch (const std::exception& error) {
+                throw std::runtime_error(std::string("CUDA unavailable: ")+error.what());
+              }
             }
             resources.reserve(count);
             check(cudaMemset(resources.invalid,0,sizeof(int)),"status initialization");
@@ -160,10 +166,18 @@ int main(int argc, char** argv) {
             put_uint(header+40,runtime_version,4); put_uint(header+44,driver_version,4);
             std::memcpy(header+48,properties.name,std::min(size_t(127),std::strlen(properties.name)));
             std::cout.write(reinterpret_cast<char*>(header),sizeof(header));
-            for (const auto& record : output) {
-                unsigned char bytes[32]; put_double(bytes,record.terminal); put_double(bytes+8,record.total_return);
-                put_double(bytes+16,record.volatility); put_double(bytes+24,record.drawdown);
-                std::cout.write(reinterpret_cast<char*>(bytes),sizeof(bytes));
+            // Keep wire byte order explicit while avoiding one iostream call
+            // per scenario. Bounded staging does not grow with batch size.
+            unsigned char bytes[32*1024];
+            for (size_t first = 0; first < output.size(); first += 1024) {
+                size_t count = std::min(size_t(1024),output.size()-first);
+                for (size_t i = 0; i < count; ++i) {
+                    const auto& record = output[first+i];
+                    unsigned char* p = bytes+32*i;
+                    put_double(p,record.terminal); put_double(p+8,record.total_return);
+                    put_double(p+16,record.volatility); put_double(p+24,record.drawdown);
+                }
+                std::cout.write(reinterpret_cast<char*>(bytes),count*32);
             }
             std::cout.flush();
             if (!std::cout) throw std::runtime_error("output write failed");

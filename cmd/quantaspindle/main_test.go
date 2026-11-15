@@ -107,3 +107,50 @@ func TestCLIRejectsMalformedConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIDefaultAutoReportsActualCPUAndPreservesConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"Workers":2,"BatchSize":3}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := execute(context.Background(), []string{"-config", path, "-paths", "5", "-steps", "2", "-cuda-runner", filepath.Join(t.TempDir(), "does-not-exist")}, &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(&output)
+	var metadata struct {
+		Backend   string                           `json:"backend"`
+		Requested string                           `json:"requested_backend"`
+		Config    qs.Config                        `json:"config"`
+		Execution qs.Config                        `json:"execution_config"`
+		Selection struct{ Backend, Reason string } `json:"selection"`
+	}
+	if err := decoder.Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Requested != "auto" || metadata.Backend != (qs.CPU{}).Name() || metadata.Selection.Backend != metadata.Backend || metadata.Selection.Reason != "below-threshold" {
+		t.Fatalf("misleading provenance: %+v", metadata)
+	}
+	if metadata.Config.Workers != 2 || metadata.Config.BatchSize != 3 || metadata.Execution.Workers != 2 || metadata.Execution.BatchSize != 3 {
+		t.Fatal("explicit execution settings changed")
+	}
+	var last struct {
+		Summary qs.RunSummary `json:"summary"`
+	}
+	for decoder.More() {
+		if err := decoder.Decode(&last); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if last.Summary.Backend != metadata.Backend || last.Summary.Scenarios != 5 {
+		t.Fatalf("summary disagrees with selection: %+v", last.Summary)
+	}
+}
+
+func TestCLIExplicitCUDAStillFailsWithoutFallback(t *testing.T) {
+	var output bytes.Buffer
+	err := execute(context.Background(), []string{"-backend", "cuda", "-paths", "1", "-steps", "1", "-cuda-runner", filepath.Join(t.TempDir(), "missing")}, &output, io.Discard)
+	if err == nil || strings.Contains(output.String(), `"type":"scenario"`) || strings.Contains(output.String(), `"type":"summary"`) {
+		t.Fatal("explicit CUDA silently fell back", err)
+	}
+}

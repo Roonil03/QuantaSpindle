@@ -57,11 +57,15 @@ func streamHelper(mode string) int {
 		if err != nil {
 			return 2
 		}
-		if mode == "hang" {
+		if mode == "hang" || (mode == "hang-workload" && binary.LittleEndian.Uint32(request[12:]) > 1) {
 			time.Sleep(time.Hour)
 		}
 		if mode == "exit" {
 			_, _ = os.Stderr.Write([]byte("device failure"))
+			return 7
+		}
+		if mode == "unavailable" {
+			_, _ = os.Stderr.Write([]byte("quantaspindle-cuda: CUDA unavailable: no CUDA device"))
 			return 7
 		}
 		if mode == "stderr" {

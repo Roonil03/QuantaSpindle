@@ -19,6 +19,7 @@ import (
 
 	qs "github.com/Roonil03/QuantaSpindle"
 	"github.com/Roonil03/QuantaSpindle/cuda"
+	"github.com/Roonil03/QuantaSpindle/hybrid"
 )
 
 func main() {
@@ -35,7 +36,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	fs := flag.NewFlagSet("quantaspindle", flag.ContinueOnError)
 	fs.SetOutput(diagnostic)
 	configPath := fs.String("config", "", "strict JSON Config file; flags override explicitly supplied fields")
-	backendName := fs.String("backend", "cpu", "cpu or cuda; no automatic fallback")
+	backendName := fs.String("backend", "auto", "auto, cpu or cuda; explicit modes pin the backend")
 	runner := fs.String("cuda-runner", "", "path to the trusted native CUDA executable")
 	paths := fs.Int("paths", cfg.Paths, "scenario count, one path per asset per scenario")
 	steps := fs.Int("steps", cfg.Steps, "number of time intervals")
@@ -52,6 +53,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
 	}
+	explicitWorkers, explicitBatch := false, false
 	if *configPath != "" {
 		f, err := os.Open(*configPath)
 		if err != nil {
@@ -75,9 +77,14 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 			return fmt.Errorf("config: %w", err)
 		}
 		for name := range fields {
+			if strings.EqualFold(name, "Workers") {
+				explicitWorkers = true
+			}
+			if strings.EqualFold(name, "BatchSize") {
+				explicitBatch = true
+			}
 			if strings.EqualFold(name, "Assets") {
 				cfg.Assets = nil
-				break
 			}
 		}
 		decoder := json.NewDecoder(bytes.NewReader(data))
@@ -108,8 +115,10 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		case "seed":
 			cfg.Seed = *seed
 		case "workers":
+			explicitWorkers = true
 			cfg.Workers = *workers
 		case "batch":
+			explicitBatch = true
 			cfg.BatchSize = *batch
 		case "store-paths":
 			cfg.StorePaths = *storePaths
@@ -128,23 +137,45 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	var backend qs.Backend
 	var gpu *cuda.Backend
+	var selected *hybrid.Selection
+	executionConfig := cfg
+	started := time.Now()
 	switch *backendName {
+	case "auto":
+		options := hybrid.Options{Runner: *runner}
+		if !explicitWorkers {
+			options.CUDAWorkers = 1
+		}
+		if !explicitBatch {
+			options.CUDABatchSize = 16384
+		}
+		var err error
+		selected, err = hybrid.Select(ctx, cfg, options)
+		if err != nil {
+			return err
+		}
+		defer selected.Close()
+		backend, executionConfig = selected.Backend, selected.Config
 	case "cpu":
 		backend = qs.CPU{}
 	case "cuda":
 		gpu = &cuda.Backend{Runner: *runner}
 		backend = gpu
 	default:
-		return fmt.Errorf("unknown backend %q; use cpu or cuda", *backendName)
+		return fmt.Errorf("unknown backend %q; use auto, cpu or cuda", *backendName)
 	}
 	writer := bufio.NewWriter(output)
 	encoder := json.NewEncoder(writer)
 	metadata := map[string]any{"type": "metadata", "config": cfg, "backend": backend.Name(), "precision": "float64", "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "gomaxprocs": runtime.GOMAXPROCS(0), "version": buildVersion(), "started_utc": time.Now().UTC().Format(time.RFC3339Nano)}
+	metadata["requested_backend"] = *backendName
+	if selected != nil {
+		metadata["selection"] = selected.Decision
+		metadata["execution_config"] = executionConfig
+	}
 	if err := encoder.Encode(metadata); err != nil {
 		return err
 	}
-	started := time.Now()
-	summary, runErr := qs.Run(ctx, cfg, backend, func(s qs.Scenario) error {
+	summary, runErr := qs.Run(ctx, executionConfig, backend, func(s qs.Scenario) error {
 		if *summaryOnly {
 			return nil
 		}
@@ -153,6 +184,9 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 			Scenario qs.Scenario `json:"scenario"`
 		}{"scenario", s})
 	})
+	if selected != nil {
+		runErr = errors.Join(runErr, selected.Close())
+	}
 	elapsed := time.Since(started)
 	if runErr != nil {
 		_ = encoder.Encode(map[string]any{"type": "error", "error": runErr.Error(), "completed": summary.Scenarios})
@@ -167,6 +201,12 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	if gpu != nil {
 		result["cuda"] = gpu.Stats()
+	}
+	if selected != nil {
+		result["selection"] = selected.Decision
+		if stats, ok := selected.CUDAStats(); ok {
+			result["cuda"] = stats
+		}
 	}
 	if err := encoder.Encode(result); err != nil {
 		return err
