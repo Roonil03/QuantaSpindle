@@ -19,6 +19,8 @@ Target version: v0.1.0. A version is released only after its checks and review p
 - Passed CPU unit and race checks in the pinned Go 1.27.1 Linux container.
 - Passed rebuilt native RTX 3060 CUDA correctness tests, including replay, analytical and CPU moment checks, malformed requests, output limits, and process cancellation.
 - Recorded five-trial CPU scaling measurements and a separate standard Go PGO experiment with explicit limits in docs/validation.md.
+- Passed real GPU tests in a separately identified CUDA 12.4 Linux container and recorded matched five-trial CPU/CUDA batch measurements. The tested runner did not beat CPU median full execution time at those batch sizes.
+- Passed GitHub Actions checks on the reviewed CLI correction.
 
 ### Known limitations
 

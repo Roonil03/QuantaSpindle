@@ -22,3 +22,4 @@
 /accelerators/fpga/reports/
 /Dockerfile.benchmark.local
 /compose.benchmark.local.yml
+/local/Dockerfile.cuda

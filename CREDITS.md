@@ -11,6 +11,7 @@ QuantaSpindle is independently written. These entries identify material referenc
 
 - Go, https://go.dev/, 1.27.1 for recorded local checks and the pinned CPU container. Standard supported compiler and runtime, without modifications.
 - NVIDIA CUDA Toolkit, https://developer.nvidia.com/cuda-toolkit, installed nvcc 13.2.51. Optional device compilation and runtime. Governed by NVIDIA's proprietary toolkit terms at https://docs.nvidia.com/cuda/eula/index.html. No vendor binaries are redistributed.
+- NVIDIA CUDA 12.4.131 and GCC 11.4.0, https://docs.nvidia.com/cuda/archive/12.4.1/ and https://gcc.gnu.org/. Used for the GPU-enabled Ubuntu 22.04.4 container checks and measurements. The toolkit came from an already installed local image identified in docs/validation.md; unrelated application code and data were not used. NVIDIA toolkit terms and GCC's GPL/runtime exceptions apply. Neither compiler nor runtime is bundled with this Go module.
 - Microsoft Visual C++, https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line, installed Visual Studio 2022 tools for Windows CUDA host compilation. Microsoft license applies; not bundled.
 - Docker Engine, https://docs.docker.com/engine/, local 29.9.3. Runs pinned Go CPU checks. Engine components and Docker Desktop have distinct licenses; no Docker software or base image is included in the repository.
 - GitHub Actions checkout and setup-go, https://github.com/actions/checkout and https://github.com/actions/setup-go, v4 and v5. CI workflow actions under MIT licenses. Referenced by workflow, not vendored.

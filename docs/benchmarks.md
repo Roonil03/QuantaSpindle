@@ -21,8 +21,25 @@ The Dockerfile is excluded from Git; create it locally using the content above. 
 
 Run one warm-up followed by five measured trials. Report the median and minimum/maximum of elapsed time, paths/s, scenarios/s, B/op, and allocs/op. The benchmarks include workers and batch-size cases. Profiling is a separate run; profiling overhead must not enter the published throughput sample. The saved CPU profile is the starting point for tuning, not evidence of a speedup.
 
-For profile-guided optimization, use the representative profile with `go build -pgo=profiles/cpu.prof` and compare with `go build -pgo=off`. No PGO improvement is claimed without that comparison. Generated profiles are ignored. No custom compiler, runtime, unsafe code, assembly, or unmeasured optimizer changes are included.
+For profile-guided optimization, compare the representative profile with standard compilation:
+
+```sh
+go test -pgo=off -run '^$' -bench 'BenchmarkRun/workers=4/batch=128$' -benchtime 500ms -benchmem -count 5 .
+go test -pgo=profiles/cpu.prof -run '^$' -bench 'BenchmarkRun/workers=4/batch=128$' -benchtime 500ms -benchmem -count 5 .
+```
+
+The recorded comparison is in docs/validation.md. Generated profiles are ignored. No custom compiler, runtime, unsafe code, assembly, or unmeasured optimizer changes are included.
 
 CUDA measurements require a working NVIDIA GPU, driver, toolkit, and optional supported container runtime. See docs/cuda.md. Report kernel event time separately from full Go invocation time, including process startup, device setup, transfer, allocation, and synchronization. A native Windows run is not a GPU container run. Mark unavailable container checks explicitly. CPU/CUDA tests compare distributions because their random generators differ; no bitwise cross-backend equality is promised.
+
+The completed GPU measurements used an existing local CUDA 12.4.131 toolchain image plus the pinned Go 1.27.1 toolchain, not the incomplete CUDA 13.2 image download. Reproducing the exact local image requires access to the local image identities listed in docs/validation.md. They are not claimed as public images. The ignored `local/Dockerfile.cuda` used the pinned Go image as a first stage, the recorded local CUDA base as a second stage, copied `/usr/local/go` between them, set PATH to include `/usr/local/go/bin` and `/usr/local/cuda/bin`, and set WORKDIR to `/work`. Build it locally, then run:
+
+```powershell
+docker build -f local/Dockerfile.cuda --build-arg CUDA_BASE=fin-dl-benchmark:cuda12.4 -t quantaspindle-cuda-benchmark:local .
+docker run --rm --user 0 --gpus all --entrypoint sh --mount "type=bind,source=$((Get-Location).Path),target=/work" -w /work quantaspindle-cuda-benchmark:local -c 'mkdir -p local/linux benchmarks/generated; nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda; QS_CUDA_RUNNER=/work/local/linux/quantaspindle-cuda go test ./cuda -v'
+docker run --rm --user 0 --gpus all --entrypoint sh --mount "type=bind,source=$((Get-Location).Path),target=/work" -w /work quantaspindle-cuda-benchmark:local -c 'go run ./cmd/qsbench -backend cpu > benchmarks/generated/batches-cpu.jsonl; go run ./cmd/qsbench -backend cuda -cuda-runner /work/local/linux/quantaspindle-cuda > benchmarks/generated/batches-cuda.jsonl'
+```
+
+`qsbench` runs one warm-up and five measured trials for batch sizes 256, 4096, and 16384. Each JSON record includes the exact config, backend, Go version, elapsed time, Go allocations, and optional CUDA timing/provenance. `runtime.GC()` runs before timing each trial. It does not measure peak memory or include JSON encoding in the elapsed time. Record `docker image inspect`, `nvcc --version`, host compiler, OS, assigned resources, and `nvidia-smi` as well. Rebuild under another base only as a new experiment and record that identity; do not label it the recorded image.
 
 FPGA performance model, RTL simulation, vendor emulation, and physical board results are all unavailable. Keep them separate from CPU and CUDA measurements when adapters are added.

@@ -42,9 +42,26 @@ The separate full-path case used 128 scenarios, workers 2 and batch 16, with oth
 
 Commands and profile files are produced by `sh scripts/benchmark-cpu.sh` inside the pinned image. The final raw CPU output is local at `benchmarks/generated/cpu.txt`. The corrected CPU profile attributed 32.15% of samples to `math.archExp`, 19.39% to `math.archLog`, and 17.02% directly to `simulate`; sampling does not prove that replacing those functions preserves numerical behavior. No unsafe code, assembly, custom compiler, or speculative micro-optimization was added.
 
-## GPU and FPGA performance status
+## Matched CPU and CUDA container measurements
 
-The native GPU correctness test's individual timings are diagnostic observations, not repeated benchmark evidence. GPU container measurements and matched CPU/GPU batch latency will be recorded after the pinned CUDA image is ready. No GPU throughput or speedup is claimed on the basis of a correctness test.
+The official CUDA 13.2 development image download did not finish in the available session and was canceled. An already installed CUDA 12.4 image supplied a separately identified container environment. Its actual native compiler was nvcc 12.4.131. The Go 1.27.1 installation was copied through a local multistage Docker build from the pinned Go image above. The native GPU correctness suite passed in that container, reporting runtime API 12040 and driver API 13050 on the RTX 3060 Laptop GPU.
+
+The local CUDA base was `fin-dl-benchmark:cuda12.4@sha256:98e28ee2f2323e68a2fdc5a571e4c41e93e41305da77a1f8baad15cfb0802e64`. The resulting local image was `quantaspindle-cuda-benchmark@sha256:bccbfdea8c8dcfaf6d47a46633f5e0964b10151778960d8ee635a0751660d05d`. Its OS was Ubuntu 22.04.4 LTS, with GCC 11.4.0, the same WSL2 kernel, 16 visible logical CPUs, and 8,182,960,128 bytes assigned memory. These are local image identities, not a promise that either image is publicly downloadable. Only their CUDA/host compiler toolchain was used; no existing application source, model, or data from that image was used. Reproducing the exact environment requires the recorded local image. Another supported CUDA 12.4 development image can run the same source and commands but constitutes a new measured environment.
+
+Source: delivery commit `3f41ec8`, containing the reviewed CPU/CUDA engine. The runner was compiled with `nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda`. Both backends used Go 1.27.1, one worker, seed 1, price 100, drift 0.05, volatility 0.2, 252 steps, DT 1/252, no paths or regimes, and one batch per invocation. GOMAXPROCS was 16. One unreported warm-up preceded five measured trials per backend and batch size. The clock covers Run, including CUDA process startup, device initialization, transfers, allocation, synchronization, decoding, and aggregation. Compilation, explicit pre-trial GC, memory statistics reads, and output JSON encoding are outside the timed region.
+
+| Backend | Scenarios and batch | Full median ms | Full min to max ms | Median scenarios/s and asset paths/s | Kernel median ms (min to max) | Runner host median ms | Go allocated bytes | Go allocations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CPU | 256 | 2.841 | 2.691 to 2.929 | 90,093 | Not applicable | Not applicable | 58,496 | 1,040 |
+| CUDA | 256 | 170.781 | 150.714 to 239.890 | 1,499 | 5.208 (4.861 to 6.250) | 123.221 | 149,152 | 1,128 |
+| CPU | 4,096 | 45.810 | 45.039 to 46.957 | 89,414 | Not applicable | Not applicable | 819,776 | 16,399 |
+| CUDA | 4,096 | 234.936 | 176.510 to 269.905 | 17,435 | 5.507 (5.322 to 7.266) | 173.613 | 1,390,528 | 16,484 |
+| CPU | 16,384 | 197.988 | 189.792 to 201.047 | 82,752 | Not applicable | Not applicable | 3,277,360 | 65,550 |
+| CUDA | 16,384 | 222.015 | 195.858 to 240.858 | 73,797 | 10.333 (10.207 to 11.035) | 159.920 | 5,421,472 | 65,639 |
+
+Go allocations are per invocation and exclude the native child and device. GPU event timings measure kernels only. Runner host timing includes its setup and transfer work. Neither is a substitute for full Go time. Different columns report separate medians and should not be subtracted to derive unmeasured transfer or startup components. The initial container attempt passed device tests, then failed to open the output directory under its non-root default user. Measurements were subsequently run with `--user 0` and completed successfully.
+
+An unrelated Python GPU process was visible during the container setup; no user process was stopped. These shared-host, sequential trials do not establish dedicated-GPU performance. The CUDA median full execution time was higher than the CPU median at all three tested sizes. No general crossover size or GPU speedup is claimed. CPU/CUDA random streams differ; analytical and moment comparisons test their distributions rather than identical paths. See docs/benchmarks.md for exact reproduction commands. Raw records remain local at `benchmarks/generated/batches-cpu.jsonl` and `benchmarks/generated/batches-cuda.jsonl`.
 
 Peak process memory, GPU memory peaks, and CUDA Nsight traces have not been collected. Go allocation measurements exclude native/device allocations. FPGA performance modeling, RTL simulation, vendor emulation, and physical board tests are not implemented or run. No board support or FPGA performance is claimed.
 
@@ -56,4 +73,4 @@ PGO off measured median 4.336 ms/op, range 4.154 to 4.620. PGO on measured media
 
 ## Release status
 
-v0.1.0 is still Unreleased. The repository remains private under the owner's instruction. Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending. A private vulnerability reporting route has not been verified. No public indexing request or visibility change is authorized by the local checks.
+v0.1.0 is still Unreleased. The repository remains private under the owner's instruction. Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending. The authenticated private-vulnerability-reporting endpoint returned 404 on 2026-11-15, so no private reporting route is advertised. GitHub Actions Checks passed at delivery commit `3f41ec8` (run 43686532788). A CI badge was added only after that successful run. No public indexing request or visibility change is authorized by the local checks.

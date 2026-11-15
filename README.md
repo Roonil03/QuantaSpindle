@@ -2,6 +2,7 @@
 
 ![License: GPL version 3](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Go version](https://img.shields.io/badge/Go-1.27.1-00ADD8)
+[![Checks](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml/badge.svg)](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml)
 
 QuantaSpindle is a Go library and CLI for reproducible synthetic financial market scenarios. Go runs bounded batches on the CPU and coordinates an optional native CUDA runner. CUDA kernels execute GPU work. Goroutines run on the host.
 
@@ -103,10 +104,23 @@ The corrected CPU baseline ran in the pinned Go 1.27.1 Bookworm image on an i9-1
 | CPU container | 1 | 80,453 | 12.728 (11.893 to 13.345) |
 | CPU container | 2 | 116,317 | 8.804 (8.227 to 10.919) |
 | CPU container | 4 | 186,598 | 5.488 (5.090 to 6.067) |
-| CUDA container | 1 | Not measured yet | Development image preparation pending |
+| CUDA container, same 1,024-scenario case | None | Not measured | See matched batch sizes below |
 | FPGA performance model | None | Not implemented | Not measured |
 | FPGA vendor emulation | None | Not supported | Not run |
 | Physical FPGA board | None | No supported board | Not run |
+
+A separate matched CPU/CUDA experiment used one worker, one batch, the same model settings, and batch sizes 256, 4,096, and 16,384. Both backends ran in one local CUDA 12.4.131 and Go 1.27.1 container on the same RTX 3060 Laptop host. One warm-up preceded five single-invocation trials per case. These times include full library execution; CUDA also includes child startup, device setup, allocation, transfers, and synchronization. Compilation and JSON encoding occur outside the timed region. Another GPU process was observed, so these are shared-host measurements.
+
+| Backend | Scenarios and batch | Median scenarios/s and paths/s | Full median ms (min to max) | Kernel median ms |
+| --- | --- | --- | --- | --- |
+| CPU | 256 | 90,093 | 2.841 (2.691 to 2.929) | Not applicable |
+| CUDA | 256 | 1,499 | 170.781 (150.714 to 239.890) | 5.208 |
+| CPU | 4,096 | 89,414 | 45.810 (45.039 to 46.957) | Not applicable |
+| CUDA | 4,096 | 17,435 | 234.936 (176.510 to 269.905) | 5.507 |
+| CPU | 16,384 | 82,752 | 197.988 (189.792 to 201.047) | Not applicable |
+| CUDA | 16,384 | 73,797 | 222.015 (195.858 to 240.858) | 10.333 |
+
+This runner did not beat the CPU's median full execution time on these cases. Kernel time alone excludes substantial work. These measurements do not establish performance on larger workloads, dedicated hardware, or a persistent GPU runner. The local image identity and its availability limit are in the validation report.
 
 Measured results, trial counts, memory allocations, configuration, environment, commit identities, and limitations are recorded in [validation](docs/validation.md) and [benchmark reproduction](docs/benchmarks.md). No GPU speedup, calibrated financial accuracy, or production-readiness claim is made. CPU, CUDA, and FPGA results must stay separate.
 
