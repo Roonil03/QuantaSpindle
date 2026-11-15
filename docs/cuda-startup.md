@@ -1,4 +1,4 @@
-# CUDA startup and automatic routing
+# CUDA startup and automatic routing (v0.1.2)
 
 On an RTX 3060 Laptop GPU, keeping a CUDA process ready reduced median latency to **2.67 ms for 4,096 scenarios and 10.44 ms for 16,384**. The fastest CPU medians were 6.54 and 26.75 ms. For a single cold call at either size, automatic routing chose CPU. Even across six calls, setting up and shutting down a new GPU service cost more per request than CPU. At 256 scenarios, both cold and prepared automatic routing chose CPU.
 
@@ -6,14 +6,14 @@ On an RTX 3060 Laptop GPU, keeping a CUDA process ready reduced median latency t
 
 Measurements were collected on 2026-11-15. Each cell gives median [minimum to maximum] milliseconds across five trials. Each ready trial contributes the median of five requests made after the first real request. The last column divides the full service lifetime by six user requests, including preparation, device probe and shutdown. [All 380 timing samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
 
-| Paths | Tagged v0.1.1 cold CUDA | Current forced cold CUDA | Fastest tested CPU | Cold auto (actual route) | Ready auto (actual route) | Six-call auto including setup, ms/call |
+| Paths | Tagged v0.1.1 cold CUDA | Measured v0.1.2 candidate, forced cold CUDA | Fastest tested CPU | Cold auto (actual route) | Ready auto (actual route) | Six-call auto including setup, ms/call |
 | --- | --- | --- | --- | --- | --- | --- |
 | 256 | 139.960 [128.170 to 166.834] | 138.895 [128.792 to 147.577] | 0.783 [0.761 to 0.890] | 0.832 [0.753 to 1.334] CPU | 0.761 [0.754 to 0.831] CPU | 22.932 [22.677 to 24.361] |
 | 4,096 | 141.904 [131.247 to 164.131] | 138.803 [127.798 to 142.447] | 6.536 [5.738 to 7.756] | 6.210 [5.512 to 9.347] CPU | 2.671 [2.637 to 2.986] CUDA | 25.614 [24.547 to 34.363] |
 | 16,384 | 147.179 [137.404 to 172.334] | 139.216 [133.646 to 150.788] | 26.751 [24.422 to 52.373] | 29.236 [24.839 to 35.513] CPU | 10.444 [10.179 to 12.527] CUDA | 34.662 [34.092 to 35.466] |
 | 524,288 | 407.643 [391.624 to 481.063] | 395.407 [390.898 to 460.724] | 810.008 [751.037 to 843.400] | 417.568 [396.958 to 439.244] CUDA | 282.183 [272.530 to 316.494] CUDA | 311.097 [293.104 to 334.698] |
 
-The fresh CUDA timings overlap v0.1.1 at every measured size. The small-request gains come from skipping GPU startup on CPU routes and reusing an initialized process on GPU routes. At 524,288 scenarios, the cold automatic call took 417.57 ms on GPU versus 810.01 ms for the fastest CPU configuration.
+The fresh CUDA timings overlap v0.1.1 at every measured size; no cold CUDA improvement over that release is established. The small-request gains come from skipping GPU startup on CPU routes and reusing an initialized process on GPU routes. At 524,288 scenarios, the cold automatic call took 417.57 ms on GPU versus 810.01 ms for the fastest CPU configuration.
 
 The fastest CPU worker count and batch size, in increasing workload order, were 8/64, 16/64, 16/1,024 and 16/1,024. The default CPU configuration (16/64) measured 0.859, 6.536, 28.889 and 1,019.994 ms. These comparisons include the default and every combination of 1, 4, 8 or 16 workers with batch sizes 64, 128 or 1,024.
 
@@ -34,12 +34,12 @@ Automatic selection considers cold CUDA at 262,144 scenarios or more, and a prep
 
 All cases used one asset with initial price 100, annual drift 0.05, volatility 0.2, seed 1, 252 steps and a time interval of 1/252 year. There were no regimes, supplied correlations or stored paths. Every run validated scenarios, computed the same summary fields and used a nil sink. CUDA used one worker and batches of up to 16,384. The automatic cases explicitly selected those CUDA execution settings. The library otherwise preserves the supplied settings.
 
-- **Tagged cold CUDA.** Both the native executable and the Go engine, adapter and benchmark were built from v0.1.1 (`ed503e730f6740315d32add48c087d60414479d1`). The clock covers the complete `qs.Run`, including native process startup, device initialization, transfers, decoding, aggregation and shutdown.
-- **Current cold CUDA.** One fresh process per run with the final implementation (`2db27040b08b6094766196bf0d93b99e2114093b`, tree `e169d445bdb725bba9600a1b8f1624d57dd98203`). Its clock also includes backend construction and timestamp/slice bookkeeping. The OS and driver caches can already be warm for either executable.
+- **Tagged cold CUDA.** Both the native executable and the Go engine, adapter and benchmark were built from [v0.1.1](https://github.com/Roonil03/QuantaSpindle/tree/v0.1.1) (`ed503e730f6740315d32add48c087d60414479d1`). The clock covers the complete `qs.Run`, including native process startup, device initialization, transfers, decoding, aggregation and shutdown.
+- **Measured candidate cold CUDA.** One fresh process per run with the v0.1.2 implementation at [source `2db27040b08b6094766196bf0d93b99e2114093b`](https://github.com/Roonil03/QuantaSpindle/commit/2db27040b08b6094766196bf0d93b99e2114093b), tree `e169d445bdb725bba9600a1b8f1624d57dd98203`. Its clock also includes backend construction and timestamp/slice bookkeeping. The OS and driver caches can already be warm for either executable. Release-documentation changes do not change this experiment's recorded source identity.
 - **Prepared CUDA.** Each trial starts its own service. `Prepare` performs a one-scenario, one-step device probe. The harness times six real requests and closes the service. No service survives a trial boundary.
 - **Automatic selection.** Cold timings include selection, execution and cleanup. If CUDA is chosen, the first computed batch is saved for delivery. Ready automatic timings include a new selection and lease close for each request. The six-call experiment charges preparation even when all six calls select CPU.
 
-Each case had a discarded warm-up. Each of the five trial blocks compared tagged and current cold CUDA consecutively before the CPU sweep, alternating which build ran first. As another check, the current Go adapter ran with the tagged native executable. Its cold medians were 141.172, 140.180, 168.506 and 430.921 ms. That combination always ran after the cold pair. Paths and configurations retained their order within each block. The laptop was shared, and temperature, power and background load were uncontrolled. The ranges show observed variability.
+Each case had a discarded warm-up. Each of the five trial blocks compared tagged and measured-candidate cold CUDA consecutively before the CPU sweep, alternating which build ran first. As another check, the measured Go adapter ran with the tagged native executable. Its cold medians were 141.172, 140.180, 168.506 and 430.921 ms. That combination always ran after the cold pair. Paths and configurations retained their order within each block. The laptop was shared, and temperature, power and background load were uncontrolled. The ranges show observed variability; they do not establish statistical significance or a general crossover.
 
 Compilation, Go program startup, explicit pre-trial GC, memory-statistics reads and JSON serialization were outside the clocks. Go allocation counters include harness bookkeeping and exclude native and device memory. End-to-end comparisons use wall time.
 
@@ -47,7 +47,7 @@ Compilation, Go program startup, explicit pre-trial GC, memory-statistics reads 
 
 The Intel Core i9-11900H has eight cores and 16 logical CPUs. Go used `GOMAXPROCS=16`. The RTX 3060 Laptop GPU has 6,144 MiB of reported memory. The Linux amd64 container ran Ubuntu 22.04.4, Go 1.27.1 with cgo, CUDA 12.4.131 and GCC 11.4.0 under WSL2 kernel `6.18.58.1-microsoft-standard-WSL2`. There was no additional container CPU or memory quota. The native process reported CUDA runtime API 12040 and driver API 13050.
 
-The local image was `quantaspindle-cuda-benchmark:local`, ID `sha256:bccbfdea8c8dcfaf6d47a46633f5e0964b10151778960d8ee635a0751660d05d`. The measurement ran from 08:04:11 to 08:11:12 UTC, including builds and pre-timing device tests. The checker verified 340 current records, 20 tagged records and 20 records with the alternative native executable. All CUDA summaries matched the tagged implementation exactly for the tested seeds. All CPU-routed summaries matched explicit CPU. Real-device tests passed before timing and `go test -race -count=1 ./...` passed separately afterward.
+The local image was `quantaspindle-cuda-benchmark:local`, ID `sha256:bccbfdea8c8dcfaf6d47a46633f5e0964b10151778960d8ee635a0751660d05d`. The measurement ran from 08:04:11 to 08:11:12 UTC, including builds and pre-timing device tests. The checker verified 340 measured-implementation records, 20 tagged records and 20 records with the alternative native executable. All CUDA summaries matched the tagged implementation exactly for the tested seeds. All CPU-routed summaries matched explicit CPU. Real-device tests passed before timing and `go test -race -count=1 ./...` passed separately afterward.
 
 Full source and binary hashes, JSONL records, environment details and test logs remain in the local output directory `benchmarks/generated/cuda-startup-release/`. The public CSV preserves the latency measurements. [Public samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
 

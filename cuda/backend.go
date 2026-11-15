@@ -24,7 +24,7 @@
 // complete caller latency; Go allocation counts exclude native/device memory.
 // See the repository CUDA guide and performance report for build commands,
 // protocol, actual measurements, and their limits:
-// https://github.com/Roonil03/QuantaSpindle/blob/main/docs/cuda.md.
+// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.2/docs/cuda.md.
 package cuda
 
 import (

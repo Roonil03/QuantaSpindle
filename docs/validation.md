@@ -2,12 +2,14 @@
 
 ## Version scope
 
-- The [startup and dispatch experiment](cuda-startup.md) compares the implementation on `main` with the complete v0.1.1 CUDA adapter and native runner. It covers one-off calls, reusable services and the automatic backend choice.
+- The [startup and dispatch experiment](cuda-startup.md) compares the implementation shipped in v0.1.2 with the complete v0.1.1 CUDA adapter and native runner. It covers one-off calls, reusable services and the automatic backend choice.
 - **v0.1.0 historical record:** the environments, checks, CPU baselines, original one-process-per-batch CUDA measurements, PGO experiment, and publication verification below describe the original release work. They are not measurements of the optimized implementation.
 - **v0.1.1 follow-up:** per-run CUDA process/device reuse and its matched measurements are recorded in [CUDA performance](cuda-performance.md). Follow-up CI and rebuilt-device checks are recorded below, separately from the original release checks.
 - **Publication:** v0.1.0 remains at its original tag. A later documentation edit or GitHub release-note follow-up does not change its source, checksum, or behavior.
 
 ## Hybrid routing checks on 2026-11-15
+
+During v0.1.2 release preparation, the Windows Go 1.27.1 test suite and vet passed. The rebuilt native runner passed the CUDA and hybrid package tests on the RTX 3060 Laptop GPU. The full Linux suite also passed with race detection enabled and the GPU available. An independent check of the three original benchmark files verified their SHA-256 hashes, all 380 records and the reported latency medians and ranges.
 
 On Windows amd64, the rebuilt CUDA runner and `go test -count=1 ./...` passed on commit `8e9d250` with `QS_CUDA_RUNNER` pointing to the RTX 3060 Laptop runner. The device suite checks replay across independently submitted requests and batch partitions. The portable subprocess tests also exercise canceling a queued request, recovery following a failed exchange, a stale or truncated greeting, and closing a service with an outstanding run.
 
