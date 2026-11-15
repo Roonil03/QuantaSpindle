@@ -6,7 +6,7 @@
 
 QuantaSpindle is a Go library and CLI for reproducible synthetic financial market scenarios. Go runs bounded batches on the CPU and coordinates an optional native CUDA runner. CUDA kernels execute GPU work. Goroutines run on the host.
 
-The project is preparing v0.1.0. It is independent of the conceptual stock-simulations reference. Its GitHub repository is currently private. Public Go module fetching, pkg.go.dev indexing, and service status badges are pending verification. pkg.go.dev indexes fetchable modules; it is not a separate upload service.
+v0.1.0 is the initial private release. It is independent of the conceptual stock-simulations reference. Its GitHub repository is currently private. Public Go module fetching, pkg.go.dev indexing, and service status badges are pending verification. pkg.go.dev indexes fetchable modules; it is not a separate upload service.
 
 ## Models and limits
 
@@ -24,7 +24,7 @@ Each scenario reports final prices, simple returns, annualized sample volatility
 
 Use the official Go 1.27.1 toolchain or a later supported release. There are no external Go module dependencies. CPU-only builds need no CUDA, C compiler, logger, or database.
 
-While the repository is private, configure GitHub credentials and set `GOPRIVATE=github.com/Roonil03/QuantaSpindle` before fetching it. From an authenticated checkout:
+While the repository is private, configure GitHub credentials with repository access and set `GOPRIVATE=github.com/Roonil03/QuantaSpindle` before fetching it. In a Go module, install the private version with `go get github.com/Roonil03/QuantaSpindle@v0.1.0`. From an authenticated checkout:
 
 ```sh
 go test ./...

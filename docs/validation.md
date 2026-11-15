@@ -21,7 +21,7 @@ The corrected source passed `go test ./...` and `go test -race ./...` in the pin
 
 The rebuilt native Windows runner passed `QS_CUDA_RUNNER=<absolute-runner-path> go test ./cuda -v`. This includes actual device execution, deterministic replay and scenario-ID partitioning, analytical and CPU/GPU moment comparisons at stated tolerances, deterministic zero-volatility drawdown, single-step behavior, overflow, malformed native requests including total-horizon overflow, process deadlines, and bounded subprocess stdout/stderr. CUDA tests have no CPU fallback. Portable CUDA adapter tests and vet also passed for Go 386 during implementation. Wider OS and GPU architecture support remains untested.
 
-The reviewed design and source changes were split into Foundations, Scenarios, and Kernels pull requests. Astra Medium posted findings and re-reviewed Terra's corrections before Terra merged them. CLI and delivery review follows separately.
+The reviewed design and source changes were split into Foundations, Scenarios, Kernels, and Delivery pull requests. Astra Medium posted findings and re-reviewed Terra's corrections before Terra merged them.
 
 ## CPU throughput baseline
 
@@ -73,4 +73,4 @@ PGO off measured median 4.336 ms/op, range 4.154 to 4.620. PGO on measured media
 
 ## Release status
 
-v0.1.0 is still Unreleased. The repository remains private under the owner's instruction. Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending. The authenticated private-vulnerability-reporting endpoint returned 404 on 2026-11-15, so no private reporting route is advertised. GitHub Actions Checks passed at delivery commit `3f41ec8` (run 43686532788). A CI badge was added only after that successful run. No public indexing request or visibility change is authorized by the local checks.
+The v0.1.0 private tag and release are planned after release review and CI pass; they must point to the reviewed merge commit. The repository remains private under the owner's instruction. An authenticated clean private consumer successfully ran `go mod download` for commit `19779c16763ee0ad705ba7c2697e01cb9c97f1da`. GitHub Actions CPU checks passed on that delivery commit (run 43687073691). Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending until visibility and subsequent validation permit them. The authenticated private-vulnerability-reporting endpoint returned 404 on 2026-11-15, so no private reporting route is advertised. No public indexing request or visibility change is authorized by the local checks.
