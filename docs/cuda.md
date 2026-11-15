@@ -105,6 +105,8 @@ replay version; it must not silently change that contract.
 
 ## Timing and validation
 
+The corrected runner also passed the conditional suite in a GPU-enabled Ubuntu 22.04.4 container with nvcc 12.4.131, GCC 11.4.0, Go 1.27.1, runtime API 12040, and driver API 13050 on the same RTX 3060 Laptop GPU. Native Windows used CUDA 13.2.51 and MSVC 14.42. These are separate tested environments, not a claim of support for every toolkit in between. Container measurements and the local-image availability limit are recorded in [validation](validation.md) and [reproduction](benchmarks.md).
+
 `LastMetadata()` identifies the actual GPU, CUDA runtime and driver API versions,
 generator and binary protocol. `KernelTime` comes from CUDA events around kernel
 execution. `HostTime` is runner wall time from request reading through device

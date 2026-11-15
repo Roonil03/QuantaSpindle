@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible software problem using synthetic inputs.
+title: "Bug: "
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include commands and small synthetic inputs. Do not include secrets, private data, or security vulnerabilities.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and observed results
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Commit or tag, Go version, OS, backend, and optional CUDA toolkit, driver, and GPU.
+    validations:
+      required: true

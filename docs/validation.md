@@ -1,0 +1,76 @@
+# Validation record
+
+Date: 2026-11-15. This records completed checks and measured results, not financial calibration. The source implementation reviewed for the corrected CPU baseline was CPU commit `6d03dc7` and combined CUDA branch commit `6f451d7`, subsequently merged into main at `ccdc873`. The independent pre-implementation CPU baseline is preserved locally as `benchmarks/generated/cpu-initial-98b5e91.txt`. It was gathered before any CUDA optimization; no CUDA tuning or speedup claim followed it.
+
+## Environment
+
+- CPU: Intel Core i9-11900H at reported 2.50 GHz, 8 cores and 16 logical CPUs.
+- CPU container: Docker Engine 29.9.3, Linux amd64, WSL2 kernel `6.18.58.1-microsoft-standard-WSL2`, 16 visible logical CPUs, 8,182,960,128 bytes assigned memory, 2 GiB swap.
+- Image: `golang:1.27.1-bookworm@sha256:8d48e12ec56735e9358640898b9d9b9fcca110612ed8a5567438c0a1baa24e66`. Go 1.27.1, `CGO_ENABLED=1`, standard compiler flags, no external Go modules. GOMAXPROCS was 16.
+- Native host: Windows amd64, Go 1.27.1, `CGO_ENABLED=0`. No GCC toolchain was available for native Go race tests. The Linux container ran those checks instead.
+- GPU: NVIDIA GeForce RTX 3060 Laptop GPU, 6 GiB reported device memory, Windows driver 621.24. Native nvcc 13.2.51, Visual Studio 2022 MSVC 14.42.34433, runner architecture `sm_86`, FP64, `-O3 --fmad=false`, no fast-math. Actual runner metadata reports CUDA runtime API 13020 and driver API 13050.
+- GPU container access probe: `docker run --rm --gpus all <pinned-Go-image> nvidia-smi` succeeded. The Linux driver shim reported 620.73.02, Windows kernel-mode driver 621.24. Container execution results are recorded separately when complete.
+
+Memory assigned to WSL2 is not a measurement of physical host RAM. Background host work and laptop thermal/power limits affect these measurements. Do not compare them with another system without controlling those conditions.
+
+## Completed checks
+
+Native Windows `go test ./...` and `go vet ./...` passed during implementation. A short CLI run exposed zero elapsed time at the platform clock's resolution; the CLI now omits throughput when elapsed time is zero rather than emitting nonfinite JSON. The CLI test passes after that correction.
+
+The corrected source passed `go test ./...` and `go test -race ./...` in the pinned Go Linux container. CPU tests cover analytical zero-volatility paths, 30,000-path GBM mean/variance checks using predeclared six-standard-error tolerances, 16,000-path empirical innovation correlations, singular PSD inputs, regime timing, replay across worker and batch choices, parameter and storage limits, cancellation, sink ownership and partial delivery, malformed backend paths/states, and hand-computed risk/impact results. Race detection covers Go code, not native GPU memory.
+
+The rebuilt native Windows runner passed `QS_CUDA_RUNNER=<absolute-runner-path> go test ./cuda -v`. This includes actual device execution, deterministic replay and scenario-ID partitioning, analytical and CPU/GPU moment comparisons at stated tolerances, deterministic zero-volatility drawdown, single-step behavior, overflow, malformed native requests including total-horizon overflow, process deadlines, and bounded subprocess stdout/stderr. CUDA tests have no CPU fallback. Portable CUDA adapter tests and vet also passed for Go 386 during implementation. Wider OS and GPU architecture support remains untested.
+
+The reviewed design and source changes were split into Foundations, Scenarios, and Kernels pull requests. Astra Medium posted findings and re-reviewed Terra's corrections before Terra merged them. CLI and delivery review follows separately.
+
+## CPU throughput baseline
+
+Workload: one asset, initial price 100, annual drift 0.05, volatility 0.2, 252 steps, DT 1/252 year, seed 1, 1,024 scenarios per operation, no stored paths, no regimes or supplied correlation. The sink discards results while the library computes summary means. One scenario equals one asset path here. Setup, worker scheduling, simulation, and aggregation are included. JSON serialization, process startup, and compilation are excluded from these Go benchmarks.
+
+One warm-up (`-benchtime 1x`) preceded five measured trials with `-benchtime 500ms -count 5 -benchmem`. Each trial is Go's elapsed-time average over its calibrated operation count. The table reports median and minimum/maximum of those five averages. Allocations and bytes are median values per complete 1,024-scenario operation, not peak memory.
+
+| Workers | Batch | Median ms/op | Min to max ms/op | Median scenarios/s and paths/s | B/op | Allocs/op |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 16 | 12.930 | 12.756 to 15.987 | 79,195 | 251,650 | 4,614 |
+| 1 | 128 | 12.728 | 11.893 to 13.345 | 80,453 | 209,816 | 4,166 |
+| 2 | 16 | 10.755 | 9.413 to 11.994 | 95,214 | 248,333 | 4,454 |
+| 2 | 128 | 8.804 | 8.227 to 10.919 | 116,317 | 209,404 | 4,146 |
+| 4 | 16 | 8.630 | 8.292 to 9.625 | 118,654 | 246,380 | 4,374 |
+| 4 | 128 | 5.488 | 5.090 to 6.067 | 186,598 | 209,147 | 4,136 |
+
+The separate full-path case used 128 scenarios, workers 2 and batch 16, with other model settings unchanged. It measured median 2.328 ms/op, range 1.898 to 5.289 ms/op, median 54,986 scenarios/s and asset paths/s, 558,559 B/op and 946 allocs/op. Its smaller scenario count and extra output make it a separate workload.
+
+Commands and profile files are produced by `sh scripts/benchmark-cpu.sh` inside the pinned image. The final raw CPU output is local at `benchmarks/generated/cpu.txt`. The corrected CPU profile attributed 32.15% of samples to `math.archExp`, 19.39% to `math.archLog`, and 17.02% directly to `simulate`; sampling does not prove that replacing those functions preserves numerical behavior. No unsafe code, assembly, custom compiler, or speculative micro-optimization was added.
+
+## Matched CPU and CUDA container measurements
+
+The official CUDA 13.2 development image download did not finish in the available session and was canceled. An already installed CUDA 12.4 image supplied a separately identified container environment. Its actual native compiler was nvcc 12.4.131. The Go 1.27.1 installation was copied through a local multistage Docker build from the pinned Go image above. The native GPU correctness suite passed in that container, reporting runtime API 12040 and driver API 13050 on the RTX 3060 Laptop GPU.
+
+The local CUDA base was `fin-dl-benchmark:cuda12.4@sha256:98e28ee2f2323e68a2fdc5a571e4c41e93e41305da77a1f8baad15cfb0802e64`. The resulting local image was `quantaspindle-cuda-benchmark@sha256:bccbfdea8c8dcfaf6d47a46633f5e0964b10151778960d8ee635a0751660d05d`. Its OS was Ubuntu 22.04.4 LTS, with GCC 11.4.0, the same WSL2 kernel, 16 visible logical CPUs, and 8,182,960,128 bytes assigned memory. These are local image identities, not a promise that either image is publicly downloadable. Only their CUDA/host compiler toolchain was used; no existing application source, model, or data from that image was used. Reproducing the exact environment requires the recorded local image. Another supported CUDA 12.4 development image can run the same source and commands but constitutes a new measured environment.
+
+Source: delivery commit `3f41ec8`, containing the reviewed CPU/CUDA engine. The runner was compiled with `nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda`. Both backends used Go 1.27.1, one worker, seed 1, price 100, drift 0.05, volatility 0.2, 252 steps, DT 1/252, no paths or regimes, and one batch per invocation. GOMAXPROCS was 16. One unreported warm-up preceded five measured trials per backend and batch size. The clock covers Run, including CUDA process startup, device initialization, transfers, allocation, synchronization, decoding, and aggregation. Compilation, explicit pre-trial GC, memory statistics reads, and output JSON encoding are outside the timed region.
+
+| Backend | Scenarios and batch | Full median ms | Full min to max ms | Median scenarios/s and asset paths/s | Kernel median ms (min to max) | Runner host median ms | Go allocated bytes | Go allocations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CPU | 256 | 2.841 | 2.691 to 2.929 | 90,093 | Not applicable | Not applicable | 58,496 | 1,040 |
+| CUDA | 256 | 170.781 | 150.714 to 239.890 | 1,499 | 5.208 (4.861 to 6.250) | 123.221 | 149,152 | 1,128 |
+| CPU | 4,096 | 45.810 | 45.039 to 46.957 | 89,414 | Not applicable | Not applicable | 819,776 | 16,399 |
+| CUDA | 4,096 | 234.936 | 176.510 to 269.905 | 17,435 | 5.507 (5.322 to 7.266) | 173.613 | 1,390,528 | 16,484 |
+| CPU | 16,384 | 197.988 | 189.792 to 201.047 | 82,752 | Not applicable | Not applicable | 3,277,360 | 65,550 |
+| CUDA | 16,384 | 222.015 | 195.858 to 240.858 | 73,797 | 10.333 (10.207 to 11.035) | 159.920 | 5,421,472 | 65,639 |
+
+Go allocations are per invocation and exclude the native child and device. GPU event timings measure kernels only. Runner host timing includes its setup and transfer work. Neither is a substitute for full Go time. Different columns report separate medians and should not be subtracted to derive unmeasured transfer or startup components. The initial container attempt passed device tests, then failed to open the output directory under its non-root default user. Measurements were subsequently run with `--user 0` and completed successfully.
+
+An unrelated Python GPU process was visible during the container setup; no user process was stopped. These shared-host, sequential trials do not establish dedicated-GPU performance. The CUDA median full execution time was higher than the CPU median at all three tested sizes. No general crossover size or GPU speedup is claimed. CPU/CUDA random streams differ; analytical and moment comparisons test their distributions rather than identical paths. See docs/benchmarks.md for exact reproduction commands. Raw records remain local at `benchmarks/generated/batches-cpu.jsonl` and `benchmarks/generated/batches-cuda.jsonl`.
+
+Peak process memory, GPU memory peaks, and CUDA Nsight traces have not been collected. Go allocation measurements exclude native/device allocations. FPGA performance modeling, RTL simulation, vendor emulation, and physical board tests are not implemented or run. No board support or FPGA performance is claimed.
+
+## Standard Go PGO experiment
+
+The same CPU image ran `go test -pgo=off -run '^$' -bench 'BenchmarkRun/workers=4/batch=128$' -benchtime 500ms -benchmem -count 5 .`, followed by the same command with `-pgo=profiles/cpu.prof`. The profile was collected from the same 252-step GBM model. PGO means profile-guided optimization using the standard Go compiler. No compiler modifications were made.
+
+PGO off measured median 4.336 ms/op, range 4.154 to 4.620. PGO on measured median 3.939 ms/op, range 3.784 to 5.729. These sequential samples overlap and had different host conditions from the earlier baseline, so they do not establish a stable improvement. PGO is not enabled by default. Reproduce both commands with a newly collected representative profile rather than assuming these values transfer. Raw outputs and profile remain local at `benchmarks/generated/pgo-off.txt`, `benchmarks/generated/pgo-on.txt`, and `profiles/cpu.prof`; `scripts/benchmark-cpu.sh` regenerates the profile.
+
+## Release status
+
+v0.1.0 is still Unreleased. The repository remains private under the owner's instruction. Public clean-consumer fetch, Go proxy/index discovery, pkg.go.dev documentation and badges, Go Report Card, authoritative registry/name searches, and trademark clearance remain pending. The authenticated private-vulnerability-reporting endpoint returned 404 on 2026-11-15, so no private reporting route is advertised. GitHub Actions Checks passed at delivery commit `3f41ec8` (run 43686532788). A CI badge was added only after that successful run. No public indexing request or visibility change is authorized by the local checks.
