@@ -43,7 +43,7 @@ func (CPU) Batch(ctx context.Context, c Config, first uint64, count int) ([]Scen
 	if ctx == nil {
 		return nil, fmt.Errorf("context is nil")
 	}
-	if err := c.Validate(); err != nil {
+	if err := c.validateDimensions(); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -52,13 +52,18 @@ func (CPU) Batch(ctx context.Context, c Config, first uint64, count int) ([]Scen
 	if count < 1 || count > 16384 || first >= uint64(c.Paths) || uint64(count) > uint64(c.Paths)-first {
 		return nil, fmt.Errorf("batch IDs/count outside configured paths or batch limit")
 	}
-	if uint64(count)*scenarioBytes(c) > maxWaveBytes {
+	if uint64(count)*scenarioBytes(c)+factorBytes(len(c.Assets)) > maxWaveBytes {
 		return nil, fmt.Errorf("batch exceeds 512 MiB storage limit")
 	}
 	l, err := correlationFactor(c.Correlation, len(c.Assets))
 	if err != nil {
 		return nil, err
 	}
+	return cpuBatch(ctx, c, l, first, count)
+}
+
+// cpuBatch uses the immutable factor prepared once for this Run or Batch.
+func cpuBatch(ctx context.Context, c Config, l [][]float64, first uint64, count int) ([]Scenario, error) {
 	out := make([]Scenario, count)
 	for i := range out {
 		s, e := simulate(ctx, c, l, first+uint64(i))
@@ -184,12 +189,20 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	if ctx == nil {
 		return summary, fmt.Errorf("context is nil")
 	}
-	if err := c.Validate(); err != nil {
+	if err := c.validateDimensions(); err != nil {
 		return summary, err
 	}
 	if backend == nil {
 		return summary, fmt.Errorf("backend is nil")
 	}
+	factor, err := correlationFactor(c.Correlation, len(c.Assets))
+	if err != nil {
+		return summary, err
+	}
+	// Only the built-in CPU backend can consume this factor directly. Custom
+	// backends keep their public Batch contract and manage their own resources.
+	_, cpuValue := backend.(CPU)
+	_, cpuPointer := backend.(*CPU)
 	summary.Backend = backend.Name()
 	summary.MeanReturns = make([]float64, len(c.Assets))
 	summary.MeanRealizedVolatility = make([]float64, len(c.Assets))
@@ -210,7 +223,11 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 			wg.Add(1)
 			go func(b, start, count int) {
 				defer wg.Done()
-				results[b], errs[b] = backend.Batch(waveCtx, c, uint64(start), count)
+				if cpuValue || cpuPointer {
+					results[b], errs[b] = cpuBatch(waveCtx, c, factor, uint64(start), count)
+				} else {
+					results[b], errs[b] = backend.Batch(waveCtx, c, uint64(start), count)
+				}
 				if errs[b] != nil {
 					cancel()
 				}
@@ -238,7 +255,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 				if err := ctx.Err(); err != nil {
 					return summary, err
 				}
-				if err := validateResult(s, uint64(first+b*c.BatchSize+j), len(c.Assets)); err != nil {
+				if err := validateResult(s, uint64(first+b*c.BatchSize+j), c); err != nil {
 					return summary, err
 				}
 				// Preserve metrics before transferring slice ownership to the sink.
@@ -265,7 +282,8 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	return summary, nil
 }
 
-func validateResult(s Scenario, id uint64, n int) error {
+func validateResult(s Scenario, id uint64, c Config) error {
+	n := len(c.Assets)
 	if s.ID != id || len(s.FinalPrices) != n || len(s.Returns) != n || len(s.RealizedVolatility) != n || len(s.MaxDrawdown) != n {
 		return fmt.Errorf("backend returned malformed scenario %d", id)
 	}
@@ -273,6 +291,32 @@ func validateResult(s Scenario, id uint64, n int) error {
 		if !finite(s.FinalPrices[i]) || s.FinalPrices[i] <= 0 || !finite(s.Returns[i]) || s.Returns[i] < -1 || !finite(s.RealizedVolatility[i]) || s.RealizedVolatility[i] < 0 || !finite(s.MaxDrawdown[i]) || s.MaxDrawdown[i] < 0 || s.MaxDrawdown[i] > 1 {
 			return fmt.Errorf("backend returned invalid scenario %d asset %d", id, i)
 		}
+		if c.StorePaths {
+			if len(s.Prices) != n || len(s.Prices[i]) != c.Steps+1 || s.Prices[i][0] != c.Assets[i].InitialPrice || s.Prices[i][c.Steps] != s.FinalPrices[i] {
+				return fmt.Errorf("backend returned malformed price path for scenario %d asset %d", id, i)
+			}
+			for _, price := range s.Prices[i] {
+				if !finite(price) || price <= 0 {
+					return fmt.Errorf("backend returned invalid price path for scenario %d asset %d", id, i)
+				}
+			}
+		}
+	}
+	states := max(1, len(c.Regimes))
+	if s.FinalRegime < 0 || s.FinalRegime >= states {
+		return fmt.Errorf("backend returned invalid final regime for scenario %d", id)
+	}
+	if c.StorePaths {
+		if len(s.Regimes) != c.Steps+1 || s.Regimes[0] != c.InitialRegime || s.Regimes[c.Steps] != s.FinalRegime {
+			return fmt.Errorf("backend returned malformed regime path for scenario %d", id)
+		}
+		for _, state := range s.Regimes {
+			if state < 0 || state >= states {
+				return fmt.Errorf("backend returned invalid regime path for scenario %d", id)
+			}
+		}
+	} else if len(s.Prices) != 0 || len(s.Regimes) != 0 {
+		return fmt.Errorf("backend returned unrequested paths for scenario %d", id)
 	}
 	return nil
 }

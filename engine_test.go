@@ -311,3 +311,67 @@ func TestWorkerBoundAndOverflow(t *testing.T) {
 		t.Fatal("regime defaults invalid", err)
 	}
 }
+
+type malformedBackend struct{ corrupt func(*Scenario) }
+
+func (malformedBackend) Name() string { return "malformed" }
+func (b malformedBackend) Batch(ctx context.Context, c Config, first uint64, count int) ([]Scenario, error) {
+	results, err := (CPU{}).Batch(ctx, c, first, count)
+	if err == nil {
+		for i := range results {
+			if results[i].ID == 2 {
+				b.corrupt(&results[i])
+			}
+		}
+	}
+	return results, err
+}
+
+func TestMalformedBackendPathsPreserveDeliveredPrefix(t *testing.T) {
+	tests := map[string]func(*Scenario){
+		"missing prices":     func(s *Scenario) { s.Prices = nil },
+		"short prices":       func(s *Scenario) { s.Prices[0] = s.Prices[0][:1] },
+		"bad initial price":  func(s *Scenario) { s.Prices[0][0]++ },
+		"bad final price":    func(s *Scenario) { s.Prices[0][len(s.Prices[0])-1]++ },
+		"nonfinite price":    func(s *Scenario) { s.Prices[0][1] = math.NaN() },
+		"missing regimes":    func(s *Scenario) { s.Regimes = nil },
+		"invalid regime":     func(s *Scenario) { s.Regimes[1] = 1 },
+		"bad initial regime": func(s *Scenario) { s.Regimes[0] = -1 },
+		"bad final regime":   func(s *Scenario) { s.FinalRegime = 1 },
+	}
+	for name, corrupt := range tests {
+		t.Run(name, func(t *testing.T) {
+			c := tinyConfig()
+			c.StorePaths = true
+			var delivered []uint64
+			summary, err := Run(context.Background(), c, malformedBackend{corrupt}, func(s Scenario) error {
+				delivered = append(delivered, s.ID)
+				return nil
+			})
+			if err == nil || summary.Scenarios != 2 || !reflect.DeepEqual(delivered, []uint64{0, 1}) {
+				t.Fatalf("malformed scenario was delivered: summary=%+v IDs=%v err=%v", summary, delivered, err)
+			}
+		})
+	}
+}
+
+func TestFactorIncludedInWaveLimit(t *testing.T) {
+	c := tinyConfig()
+	c.Paths, c.Workers, c.BatchSize = 1024, 1024, 1
+	c.Assets = make([]Asset, 256)
+	for i := range c.Assets {
+		c.Assets[i].InitialPrice = 100
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// Find a path length whose scenario estimate fits alone but not with the factor.
+	c.Workers, c.Paths, c.StorePaths = 1, 1, true
+	c.Steps = int((maxWaveBytes - scenarioBytes(c)) / uint64(len(c.Assets)*8+8))
+	if scenarioBytes(c) > maxWaveBytes || scenarioBytes(c)+factorBytes(len(c.Assets)) <= maxWaveBytes {
+		t.Fatal("test did not straddle factor boundary")
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("wave limit omitted correlation factor")
+	}
+}

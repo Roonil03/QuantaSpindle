@@ -25,7 +25,9 @@ type Regime struct {
 // Correlation uses independent innovations. Empty Transition is allowed only
 // without regimes. StorePaths stores asset-major prices and interval states.
 // Resource limits are 256 assets, four regimes, 1,000,000 steps, 1,000,000,000
-// scenarios, 1,024 workers, 16,384 scenarios per batch, and 512 MiB per Run wave.
+// scenarios, 1,024 workers, 16,384 scenarios per batch, and an estimated 512 MiB
+// per Run wave including the shared CPU correlation factor. Caller retention,
+// input data, custom backend allocations and runtime overhead are excluded.
 type Config struct {
 	Paths         int
 	Steps         int
@@ -75,6 +77,14 @@ func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
 // Validate checks dimensions, finite values, probabilities, positive semidefinite
 // correlation and bounded working storage. No simulation workers are launched.
 func (c Config) Validate() error {
+	if err := c.validateDimensions(); err != nil {
+		return err
+	}
+	_, err := correlationFactor(c.Correlation, len(c.Assets))
+	return err
+}
+
+func (c Config) validateDimensions() error {
 	if c.Paths < 1 || c.Paths > 1_000_000_000 {
 		return fmt.Errorf("paths must be in [1,1000000000]")
 	}
@@ -132,15 +142,14 @@ func (c Config) Validate() error {
 			}
 		}
 	}
-	if _, err := correlationFactor(c.Correlation, n); err != nil {
-		return err
-	}
 	w := min(c.Workers, (c.Paths+c.BatchSize-1)/c.BatchSize)
-	if uint64(w)*uint64(min(c.BatchSize, c.Paths))*scenarioBytes(c) > maxWaveBytes {
+	if uint64(w)*uint64(min(c.BatchSize, c.Paths))*scenarioBytes(c)+factorBytes(n) > maxWaveBytes {
 		return fmt.Errorf("configured wave exceeds 512 MiB storage limit; reduce workers/batch size or disable paths")
 	}
 	return nil
 }
+
+func factorBytes(n int) uint64 { return uint64(n)*uint64(n)*8 + uint64(n)*24 + 24 }
 
 func scenarioBytes(c Config) uint64 {
 	// Conservative slice/header/state estimate; products are bounded by validation.
