@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.1.1 - 2026-11-15
+
+### Changed
+
+- Added optional per-run backend sessions. `Run` owns session startup and closure; existing batch-only backends retain their interface.
+- CUDA serves batches through one native `--stream` process per run and reuses device resources. Direct `Backend.Batch` keeps the v1 one-shot interface. The CLI needs no new flags.
+- Preserved the FP64 model and Philox seed/scenario-ID mapping; unsupported CUDA models still fail explicitly. Rebuild the native runner with the Go adapter for stream capability.
+- Reorganized the README around usage, outputs, limits, and a point-wise documentation index. Historical baselines and optimized measurements are separately scoped.
+
+### Measurements and validation
+
+- Passed [implementation CI](https://github.com/Roonil03/QuantaSpindle/actions/runs/43689434736) on `b5f1a31` and the rebuilt real-GPU suite in the recorded CUDA 12.4.131 container. Streaming output exactly matched one-shot replay across partitions and overlapping independent runs; portable subprocess tests covered cancellation, protocol failures, and cleanup.
+- On the recorded Linux RTX 3060 Laptop/i9-11900H setup, full-run CUDA medians at 262,144 and 524,288 scenarios were 381.30 ms and 505.46 ms, versus the fastest measured CPU configurations at 509.16 ms and 980.90 ms (1.34x and 1.94x). At 524,288 scenarios, the released one-shot runner measured 5,997.17 ms (11.86x the v0.1.1 latency). These are sample-median ratios; the 262,144-scenario CPU/CUDA trial ranges overlapped. CPU won all three smaller cases; these shared-host results do not establish statistical significance or a general crossover.
+- The five-trial experiment, exact settings, source identities, timing boundaries, min/max and limits are recorded in [CUDA performance](docs/cuda-performance.md), with raw `measure.jsonl` trials in the [v0.1.1 release assets](https://github.com/Roonil03/QuantaSpindle/releases/tag/v0.1.1). Historical v0.1.0 figures below remain measurements of the original source.
+- The original v0.1.0 tag is unchanged. Optimization behavior and follow-up measurements belong to v0.1.1; editing the original GitHub release notes does not alter that tag.
+
 ### Documentation and publication verification
 
 - Updated installation instructions for the public repository and verified an unauthenticated v0.1.0 download through the public Go proxy on 2026-11-15.
@@ -29,10 +45,14 @@
 - Passed real GPU tests in a separately identified CUDA 12.4 Linux container and recorded matched five-trial CPU/CUDA batch measurements. The tested runner did not beat CPU median full execution time at those batch sizes.
 - Passed GitHub Actions CPU checks on delivery commit `19779c1` (run 43687073691), and authenticated private consumer download at that commit.
 
+### CUDA optimization follow-up in v0.1.1
+
+- CUDA process/device reuse and its new measured results require [v0.1.1](https://github.com/Roonil03/QuantaSpindle/releases/tag/v0.1.1); see the [performance report](docs/cuda-performance.md). In the follow-up shared-host experiment, 524,288 scenarios took 505.46 ms with v0.1.1 CUDA versus 5,997.17 ms with the matched released one-shot runner and 980.90 ms with the fastest measured CPU configuration. CPU won the three smaller cases. These optimized results require v0.1.1 and are not behavior or performance of the v0.1.0 source. The original tag and historical results are unchanged.
+
 ### Known limitations
 
-- Public module fetching and pkg.go.dev indexing are pending repository visibility and release validation.
-- No private vulnerability reporting route has been verified.
+- At the initial release checkpoint, public fetching and pkg.go.dev indexing awaited visibility/publication verification. The v0.1.1 follow-up above records the later successful v0.1.0 checks.
+- At that checkpoint, no private vulnerability reporting route had been verified. It was enabled and verified in the later follow-up above.
 - CUDA supports one asset with constant GBM parameters, without regimes, correlation or stored paths.
 - Market calibration is not provided.
 - No FPGA board, vendor emulation, or bitstream has been validated.

@@ -1,5 +1,26 @@
-// Package cuda provides the optional native CUDA runner backend. Ordinary Go
-// builds need neither CUDA nor cgo. See docs/cuda.md for capabilities and replay.
+// Package cuda executes optional FP64 GBM kernels through a native CUDA runner.
+// It supports one asset with constant drift and volatility, no supplied
+// correlation or regimes, and no stored paths. Unsupported requests fail
+// explicitly; there is no CPU fallback. Ordinary Go builds need neither CUDA
+// nor cgo, but execution needs a locally built runner and a working NVIDIA GPU.
+//
+// Pass &Backend{Runner: trustedExecutablePath} to quantaspindle.Run. From v0.1.1,
+// Run owns a streaming process for its lifetime and reuses CUDA resources across
+// serialized batches. Direct Backend.Batch calls retain the one-shot interface.
+// Rebuild the native runner with the adapter to provide the --stream capability.
+// Runner may instead be selected through QS_CUDA_RUNNER,
+// QUANTASPINDLE_CUDA_RUNNER, or PATH. Only select a trusted executable.
+//
+// CUDA replay is scoped to the same runner build, device and toolchain. The
+// Philox seed/scenario-ID mapping differs from the CPU generator, so compare
+// distributions rather than paths across backends. Stats separates successful
+// batch timings from SessionLifetime, which includes process startup, idle/sink
+// time, shutdown and failed sessions after closure. Measure the entire Run for
+// complete caller latency; Go allocation counts exclude native/device memory.
+// See the repository CUDA guide and performance report for build commands,
+// protocol, actual measurements, and their limits:
+// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.1/docs/cuda.md and
+// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.1/docs/cuda-performance.md.
 package cuda
 
 import (
