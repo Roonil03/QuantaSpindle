@@ -32,6 +32,19 @@ type Backend interface {
 	Batch(context.Context, Config, uint64, int) ([]Scenario, error)
 }
 
+// BackendSession owns resources for one Run. Close must release them even after
+// cancellation. Batch retains the Backend concurrency and ownership contract.
+type BackendSession interface {
+	Backend
+	Close() error
+}
+
+// RunBackend optionally prepares a backend once for all batches in a Run.
+// Separate runs must receive independently owned sessions.
+type RunBackend interface {
+	BeginRun(context.Context, Config) (BackendSession, error)
+}
+
 // CPU is the portable, deterministic SplitMix64-v1/Box-Muller backend.
 type CPU struct{}
 
@@ -184,8 +197,7 @@ type RunSummary struct {
 // sink serially in ascending ID order. A nil sink discards individual results.
 // On error it returns only the successfully delivered prefix summary. The input
 // Config and its slices must remain immutable until Run returns.
-func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) error) (RunSummary, error) {
-	summary := RunSummary{}
+func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) error) (summary RunSummary, runErr error) {
 	if ctx == nil {
 		return summary, fmt.Errorf("context is nil")
 	}
@@ -198,6 +210,17 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	factor, err := correlationFactor(c.Correlation, len(c.Assets))
 	if err != nil {
 		return summary, err
+	}
+	if err := ctx.Err(); err != nil {
+		return summary, err
+	}
+	if scoped, ok := backend.(RunBackend); ok {
+		session, err := scoped.BeginRun(ctx, c)
+		if err != nil {
+			return summary, err
+		}
+		defer func() { runErr = errors.Join(runErr, session.Close()) }()
+		backend = session
 	}
 	// Only the built-in CPU backend can consume this factor directly. Custom
 	// backends keep their public Batch contract and manage their own resources.

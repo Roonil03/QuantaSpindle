@@ -54,12 +54,12 @@ type Metadata struct {
 
 // Backend executes single-asset, constant-parameter terminal GBM batches on a
 // real CUDA device. Configure its fields before concurrent use. No CPU fallback
-// occurs. Each Batch starts a fresh native runner process.
+// occurs. Direct Batch calls start fresh processes; Run reuses one process.
 type Backend struct {
 	// Runner is the executable path. Empty uses QS_CUDA_RUNNER, then
 	// QUANTASPINDLE_CUDA_RUNNER, then searches PATH for quantaspindle-cuda.
 	Runner string
-	// Timeout bounds one child process; zero selects five minutes.
+	// Timeout bounds a Batch exchange (including startup); zero selects five minutes.
 	Timeout  time.Duration
 	mu       sync.RWMutex
 	metadata Metadata
@@ -98,21 +98,32 @@ func (b *Backend) Stats() Statistics {
 // Batch returns scenarios in increasing ID order, or an error and no partial
 // results. It validates both common inputs and CUDA-specific capabilities.
 func (b *Backend) Batch(ctx context.Context, cfg quantaspindle.Config, start uint64, count int) ([]quantaspindle.Scenario, error) {
+	if err := validateBatch(ctx, cfg, start, count); err != nil {
+		return nil, err
+	}
+	return b.oneShot(ctx, cfg, start, count)
+}
+
+func validateBatch(ctx context.Context, cfg quantaspindle.Config, start uint64, count int) error {
 	if ctx == nil {
-		return nil, errors.New("CUDA: nil context")
+		return errors.New("CUDA: nil context")
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return err
 	}
 	if len(cfg.Assets) != 1 || len(cfg.Regimes) != 0 || len(cfg.Transition) != 0 || len(cfg.Correlation) != 0 || cfg.StorePaths {
-		return nil, fmt.Errorf("%w: requires one asset, no correlation/regimes, and StorePaths=false", ErrUnsupported)
+		return fmt.Errorf("%w: requires one asset, no correlation/regimes, and StorePaths=false", ErrUnsupported)
 	}
 	if count <= 0 || count > maxScenarios || cfg.Steps > maxSteps || uint64(count) > maxUpdates/uint64(cfg.Steps) || start >= uint64(cfg.Paths) || uint64(count) > uint64(cfg.Paths)-start {
-		return nil, fmt.Errorf("CUDA: invalid batch range or runner dimension limits (count<=%d, steps<=%d, updates<=%d)", maxScenarios, maxSteps, maxUpdates)
+		return fmt.Errorf("CUDA: invalid batch range or runner dimension limits (count<=%d, steps<=%d, updates<=%d)", maxScenarios, maxSteps, maxUpdates)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
+	return nil
+}
+
+func (b *Backend) runner() (string, time.Duration, error) {
 	path := b.Runner
 	if path == "" {
 		path = os.Getenv("QS_CUDA_RUNNER")
@@ -125,14 +136,22 @@ func (b *Backend) Batch(ctx context.Context, cfg quantaspindle.Config, start uin
 	}
 	resolved, err := exec.LookPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return "", 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	timeout := b.Timeout
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
 	if timeout < 0 {
-		return nil, errors.New("CUDA: timeout must be nonnegative")
+		return "", 0, errors.New("CUDA: timeout must be nonnegative")
+	}
+	return resolved, timeout, nil
+}
+
+func (b *Backend) oneShot(ctx context.Context, cfg quantaspindle.Config, start uint64, count int) ([]quantaspindle.Scenario, error) {
+	resolved, timeout, err := b.runner()
+	if err != nil {
+		return nil, err
 	}
 	childCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -165,6 +184,11 @@ func (b *Backend) Batch(ctx context.Context, cfg quantaspindle.Config, start uin
 		return nil, err
 	}
 	metadata.WallTime = wallTime
+	b.record(metadata, count)
+	return scenarios, nil
+}
+
+func (b *Backend) record(metadata Metadata, count int) {
 	b.mu.Lock()
 	b.metadata = metadata
 	b.stats.Batches++
@@ -174,7 +198,6 @@ func (b *Backend) Batch(ctx context.Context, cfg quantaspindle.Config, start uin
 	b.stats.WallTime += metadata.WallTime
 	b.stats.Last = metadata
 	b.mu.Unlock()
-	return scenarios, nil
 }
 
 func encodeRequest(cfg quantaspindle.Config, start uint64, count int) []byte {
