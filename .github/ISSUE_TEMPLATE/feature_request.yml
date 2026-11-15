@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a use case and how to check the result.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Use case
+      description: What input do you have, and what result do you need?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and validation
+      description: Include model assumptions, units, or hardware requirements where relevant.
+    validations:
+      required: true
