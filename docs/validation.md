@@ -2,9 +2,24 @@
 
 ## Version scope
 
+- The [startup and dispatch experiment](cuda-startup.md) compares the implementation on `main` with the complete v0.1.1 CUDA adapter and native runner. It covers one-off calls, reusable services and the automatic backend choice.
 - **v0.1.0 historical record:** the environments, checks, CPU baselines, original one-process-per-batch CUDA measurements, PGO experiment, and publication verification below describe the original release work. They are not measurements of the optimized implementation.
 - **v0.1.1 follow-up:** per-run CUDA process/device reuse and its matched measurements are recorded in [CUDA performance](cuda-performance.md). Follow-up CI and rebuilt-device checks are recorded below, separately from the original release checks.
 - **Publication:** v0.1.0 remains at its original tag. A later documentation edit or GitHub release-note follow-up does not change its source, checksum, or behavior.
+
+## Hybrid routing checks on 2026-11-15
+
+On Windows amd64, the rebuilt CUDA runner and `go test -count=1 ./...` passed on commit `8e9d250` with `QS_CUDA_RUNNER` pointing to the RTX 3060 Laptop runner. The device suite checks replay across independently submitted requests and batch partitions. The portable subprocess tests also exercise canceling a queued request, recovery following a failed exchange, a stale or truncated greeting, and closing a service with an outstanding run.
+
+GitHub Actions passed formatting, vet, CPU tests, race detection and benchmark smoke checks on the same revision. The implementation and review fixes merged in [PR 9](https://github.com/Roonil03/QuantaSpindle/pull/9). [CI run](https://github.com/Roonil03/QuantaSpindle/actions/runs/43691757152)
+
+The comparison harness and native output path used in the final experiment were reviewed at `2db2704`. The rebuilt Windows runner passed `go test -count=1 ./cuda ./hybrid`, and the four CLI checks below passed again on that native source. A Linux smoke comparison validated 19 records and the alternating cold-run block metadata before the full matrix. [PR 10](https://github.com/Roonil03/QuantaSpindle/pull/10) · [CI run](https://github.com/Roonil03/QuantaSpindle/actions/runs/43692699962)
+
+The complete five-trial Linux run produced 380 records. Its checks verified all expected modes, trial IDs, CPU configurations, cold comparison order, per-request execution choices, source hashes and fixed-seed summaries. After the benchmark, `go test -race -count=1 ./...` passed with the rebuilt CUDA runner on the real GPU. [Timing records](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
+
+The ordinary CLI completed four checks with its default automatic policy. A 256-scenario run selected CPU. At 262,144 scenarios it selected CUDA with the working runner, then CPU in two separate checks with a missing runner and with the GPU hidden from the working runner using `CUDA_VISIBLE_DEVICES=-1`. In each case, the metadata and final summary identified the same backend and the summary contained every requested scenario.
+
+## Historical release checks
 
 Date: 2026-11-15. This records completed checks and measured results, not financial calibration. The source implementation reviewed for the corrected CPU baseline was CPU commit `6d03dc7` and combined CUDA branch commit `6f451d7`, subsequently merged into main at `ccdc873`. The independent pre-implementation CPU baseline is preserved locally as `benchmarks/generated/cpu-initial-98b5e91.txt`. It was gathered before any CUDA optimization; no CUDA tuning or speedup claim followed it.
 

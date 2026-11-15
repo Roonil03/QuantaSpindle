@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The CLI now defaults to `-backend auto`. The new Go package `hybrid` selects a backend before delivering any output and reports the choice. CPU continues to handle regimes, correlations, multiple assets and full stored paths. Explicit `cpu` and `cuda` choices remain available for replay.
+- `cuda.Backend.Prepare` initializes one reusable device process for multiple requests. Applications own its lifetime and can pass it to either `hybrid.Run` or `quantaspindle.Run`. The ordinary CUDA backend still closes its process at the end of a run.
+- The native runner identifies device initialization failures so automatic selection can choose CPU when a GPU is unavailable.
+- On the RTX 3060 Laptop GPU and i9-11900H, ready automatic CUDA calls took 2.67 ms for 4,096 scenarios and 10.44 ms for 16,384 scenarios, compared with CPU medians of 6.54 and 26.75 ms. Cold automatic calls chose CPU at both sizes. Including preparation and shutdown over six requests raised the per-request automatic medians to 25.61 and 34.66 ms. At 256 scenarios both policies chose CPU. At 524,288 scenarios cold automatic CUDA took 417.57 ms versus 810.01 ms on CPU. Fresh forced CUDA and v0.1.1 had overlapping timing ranges. [Benchmark settings and results](docs/cuda-startup.md) · [Trial data](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
+
 ## v0.1.1 - 2026-11-15
 
 ### Changed

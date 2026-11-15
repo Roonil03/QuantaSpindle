@@ -18,4 +18,6 @@ For model changes, state the formula, units, assumptions, and analytical or stat
 
 Keep required tests and benchmark source in Git. Keep generated benchmark output, local container files, profiles, credentials, private market data, and vendor build output out of Git. Inspect `git status --short` before committing. Local Docker files have explicit entries in .gitignore.
 
+For changes to automatic dispatch, exercise an unsupported GPU model, a missing device, and the case where a run fails after delivering results. Compare cold and prepared execution separately and report the selected backend for each workload. See the [startup experiment](docs/cuda-startup.md).
+
 Contributions must be compatible with GNU GPL version 3. Record any new dependency, dataset, or material technical source in CREDITS.md. Check its license before adding it. Do not copy the conceptual reference implementation.
