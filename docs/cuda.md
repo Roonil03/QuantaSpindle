@@ -27,7 +27,7 @@ go test ./cuda -v
 On Linux with a supported host compiler:
 
 ```sh
-CUDA_ARCH=sm_86 ./scripts/build-cuda.sh
+CUDA_ARCH=sm_86 sh scripts/build-cuda.sh
 QS_CUDA_RUNNER="$PWD/local/quantaspindle-cuda" go test ./cuda -v
 ```
 

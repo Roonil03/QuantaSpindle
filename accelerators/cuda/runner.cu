@@ -101,7 +101,7 @@ int main() {
             count > max_updates/steps || start > UINT64_MAX-(count-1) ||
             count > SIZE_MAX/sizeof(Record)) throw std::runtime_error("dimensions outside runner limits");
         if (!std::isfinite(initial) || initial <= 0 || !std::isfinite(mu) ||
-            !std::isfinite(sigma) || sigma < 0 || !std::isfinite(dt) || dt <= 0 ||
+            !std::isfinite(sigma) || sigma < 0 || !std::isfinite(dt) || dt <= 0 || !std::isfinite(double(steps)*dt) ||
             !std::isfinite((mu-0.5*sigma*sigma)*dt) || !std::isfinite(sigma*std::sqrt(dt)))
             throw std::runtime_error("invalid numeric inputs");
         int device = 0, device_count = 0, runtime_version = 0, driver_version = 0;

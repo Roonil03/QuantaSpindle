@@ -105,6 +105,28 @@ func TestBoundedBuffers(t *testing.T) {
 	}
 }
 
+func TestProcessOutputLimits(t *testing.T) {
+	if os.Getenv("QS_TEST_FLOOD") == "1" {
+		chunk := bytes.Repeat([]byte("x"), 4096)
+		for i := 0; i < 32; i++ {
+			_, _ = os.Stderr.Write(chunk)
+		}
+		for i := 0; i < 32; i++ {
+			_, _ = os.Stdout.Write(chunk)
+		}
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProcessOutputLimits$")
+	cmd.Env = append(os.Environ(), "QS_TEST_FLOOD=1")
+	output := limitedBuffer{limit: 208}
+	diagnostics := limitedBuffer{limit: 16 * 1024, truncate: true}
+	cmd.Stdout, cmd.Stderr = &output, &diagnostics
+	_ = cmd.Run() // stdout is closed when the limit is reached.
+	if !output.exceeded || output.Len() != output.limit || !diagnostics.exceeded || diagnostics.Len() != diagnostics.limit {
+		t.Fatalf("process output bounds: stdout=%d exceeded=%v stderr=%d exceeded=%v", output.Len(), output.exceeded, diagnostics.Len(), diagnostics.exceeded)
+	}
+}
+
 func integrationBackend(t *testing.T) *Backend {
 	t.Helper()
 	path := os.Getenv("QS_CUDA_RUNNER")
@@ -219,6 +241,13 @@ func TestNativeRejectsMalformedRequests(t *testing.T) {
 		func(b []byte) []byte { binary.LittleEndian.PutUint64(b[40:], math.Float64bits(math.NaN())); return b },
 		func(b []byte) []byte { binary.LittleEndian.PutUint64(b[56:], math.Float64bits(-1)); return b },
 		func(b []byte) []byte { binary.LittleEndian.PutUint64(b[64:], 0); return b },
+		func(b []byte) []byte {
+			binary.LittleEndian.PutUint32(b[12:], 2)
+			binary.LittleEndian.PutUint64(b[48:], 0)
+			binary.LittleEndian.PutUint64(b[56:], 0)
+			binary.LittleEndian.PutUint64(b[64:], math.Float64bits(math.MaxFloat64))
+			return b
+		},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		cmd := exec.CommandContext(ctx, b.Runner)

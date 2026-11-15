@@ -228,19 +228,23 @@ func decodeResponse(data []byte, cfg quantaspindle.Config, start uint64, count i
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
 
 type limitedBuffer struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	limit    int
 	truncate bool
 	exceeded bool
 }
 
+func (b *limitedBuffer) Len() int       { return b.buffer.Len() }
+func (b *limitedBuffer) Bytes() []byte  { return b.buffer.Bytes() }
+func (b *limitedBuffer) String() string { return b.buffer.String() }
+
 func (b *limitedBuffer) Write(data []byte) (int, error) {
 	remaining := b.limit - b.Len()
 	if len(data) <= remaining {
-		return b.Buffer.Write(data)
+		return b.buffer.Write(data)
 	}
 	b.exceeded = true
-	b.Buffer.Write(data[:remaining])
+	b.buffer.Write(data[:remaining])
 	if b.truncate {
 		return len(data), nil
 	}
