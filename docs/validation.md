@@ -93,7 +93,7 @@ GitHub private vulnerability reporting was enabled through the repository API; a
 
 The Go Report Card project URL returned HTTP 200 with the title `Go Report Card | Thank you` and a service-retirement message; the [official service homepage](https://goreportcard.com/) independently confirmed retirement. It is not an active project assessment, so no grade or badge is claimed. Authoritative registry/name checks and trademark clearance remain outside these publication checks.
 
-## v0.1.1 optimization validation — 2026-11-15
+## v0.1.1 checks on 2026-11-15
 
 - [GitHub Actions run 43689434736](https://github.com/Roonil03/QuantaSpindle/actions/runs/43689434736) passed for implementation commit `b5f1a31`: formatting, vet, CPU tests, Go race detection, and benchmark smoke checks. The implementation was merged through [PR #7](https://github.com/Roonil03/QuantaSpindle/pull/7); the later documentation/measurement follow-up is separate.
 - The benchmark script rebuilt the CUDA runner from that implementation and passed `QS_CUDA_RUNNER=/work/local/linux/quantaspindle-cuda go test -count=1 ./cuda -v` in the recorded CUDA 12.4.131/Go 1.27.1 Linux container. The local complete log is `benchmarks/generated/cuda-resident-final/device-tests.txt`; the environment and source identity are in [CUDA performance](cuda-performance.md).
