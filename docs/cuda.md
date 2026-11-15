@@ -68,7 +68,7 @@ or a failing runner fails the tests explicitly.
 - `Backend.Timeout` bounds each request/response exchange, defaulting to five minutes. Caller cancellation terminates the child. Requests waiting for the session and active work remain subject to cancellation. The whole-run CLI timeout also bounds the run.
 - Each response has its exact expected size; retained stderr is bounded to 16 KiB. A failed or canceled batch returns no partial scenarios. `Run` may already have delivered an earlier successful prefix. Failed runs return an error and cannot report a successful final summary.
 
-## Automatic selection and prepared CUDA on main
+## Automatic selection and prepared CUDA (v0.1.2)
 
 The CLI defaults to `-backend auto`. It chooses one backend for the entire run. Use `-backend cpu` or `-backend cuda` to request a specific generator. On a CPU selection, the full CPU model is available, including correlations, regimes and stored paths. On a CUDA selection, the requested financial parameters pass through to the FP64 kernel. Which backend executed the run matters for replay.
 

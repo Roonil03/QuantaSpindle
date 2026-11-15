@@ -1,11 +1,23 @@
 # Changelog
 
-## Unreleased
+## v0.1.2 - 2026-11-15
 
-- The CLI now defaults to `-backend auto`. The new Go package `hybrid` selects a backend before delivering any output and reports the choice. CPU continues to handle regimes, correlations, multiple assets and full stored paths. Explicit `cpu` and `cuda` choices remain available for replay.
-- `cuda.Backend.Prepare` initializes one reusable device process for multiple requests. Applications own its lifetime and can pass it to either `hybrid.Run` or `quantaspindle.Run`. The ordinary CUDA backend still closes its process at the end of a run.
-- The native runner identifies device initialization failures so automatic selection can choose CPU when a GPU is unavailable.
-- On the RTX 3060 Laptop GPU and i9-11900H, ready automatic CUDA calls took 2.67 ms for 4,096 scenarios and 10.44 ms for 16,384 scenarios, compared with CPU medians of 6.54 and 26.75 ms. Cold automatic calls chose CPU at both sizes. Including preparation and shutdown over six requests raised the per-request automatic medians to 25.61 and 34.66 ms. At 256 scenarios both policies chose CPU. At 524,288 scenarios cold automatic CUDA took 417.57 ms versus 810.01 ms on CPU. Fresh forced CUDA and v0.1.1 had overlapping timing ranges. [Benchmark settings and results](docs/cuda-startup.md) · [Trial data](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
+### Automatic selection and prepared CUDA
+
+- The CLI now defaults to `-backend auto`. The new `hybrid` Go package selects one backend before delivering output and reports its decision. CPU handles multiple assets, regimes, correlations and stored paths. Pin `-backend cpu` or `-backend cuda` for replay: the backends use different random generators.
+- `cuda.Backend.Prepare` initializes a reusable device process for successive requests. Applications own its lifetime and can pass it to `hybrid.Run` or `quantaspindle.Run`. The ordinary CUDA backend continues to close its process at the end of each run.
+- Automatic selection considers cold CUDA from 262,144 scenarios and prepared CUDA from 4,096, with at least 252 steps and a supported single-asset model. These are measured-workload heuristics, not a general crossover guarantee. Missing runners and classified device initialization failures can select CPU before output. Cancellation, protocol and numerical errors still propagate; a later failure never mixes CPU and CUDA output in one run.
+
+### Measured latency and scope
+
+- Five trials on an NVIDIA RTX 3060 Laptop GPU (6,144 MiB) and Intel Core i9-11900H (8 cores/16 logical CPUs), using Go 1.27.1 and CUDA 12.4.131 in a Linux container, compared one-asset FP64 workloads with 252 steps, seed 1 and no stored paths. Complete request clocks include routing, execution and owned-process cleanup; CLI startup and JSON encoding are excluded. Ready calls use an already prepared process. The six-request figures include preparation, all requests and shutdown, divided by six.
+- At 4,096 and 16,384 scenarios, ready automatic CUDA medians were **2.671 ms and 10.444 ms**, versus the fastest tested CPU medians of **6.536 ms and 26.751 ms** (2.45x and 2.56x ratios). Cold automatic calls selected CPU and took 6.210 ms and 29.236 ms. Including setup and shutdown over six requests raised automatic per-request medians to **25.614 ms and 34.662 ms**, both slower than CPU. At 256 scenarios both policies selected CPU.
+- At 524,288 scenarios, cold automatic CUDA took **417.568 ms** versus **810.008 ms** on the fastest tested CPU; ready automatic CUDA took 282.183 ms, and six requests including setup averaged 311.097 ms per request. Fresh forced CUDA and tagged v0.1.1 had overlapping trial ranges at every measured size. The measurements do not establish a cold CUDA improvement over v0.1.1, statistical significance, or performance on other hardware.
+- The [startup report](https://github.com/Roonil03/QuantaSpindle/blob/v0.1.2/docs/cuda-startup.md) records all trial ranges, timing boundaries, configurations, hardware and reproduction commands. Measurements used [source `2db2704`](https://github.com/Roonil03/QuantaSpindle/commit/2db27040b08b6094766196bf0d93b99e2114093b), compared with the unchanged [v0.1.1 source](https://github.com/Roonil03/QuantaSpindle/tree/v0.1.1). [All 380 public latency samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836) retain those source identities. Earlier v0.1.1 and v0.1.0 measurements below remain scoped to their original experiments.
+
+### Validation
+
+- The measured implementation passed rebuilt real-device tests before timing and `go test -race -count=1 ./...` afterward. The record checker verified 340 current, 20 tagged and 20 alternate-runner records, including routing and replay. Tested CUDA summaries matched v0.1.1 exactly; CPU-routed summaries matched explicit CPU. See the [source-specific validation record](https://github.com/Roonil03/QuantaSpindle/blob/v0.1.2/docs/cuda-startup.md#hardware-validation-and-source) and [release checks](https://github.com/Roonil03/QuantaSpindle/blob/v0.1.2/docs/validation.md) for their respective scope and outcomes.
 
 ## v0.1.1 - 2026-11-15
 

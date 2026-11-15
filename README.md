@@ -3,11 +3,11 @@
 ![License: GPL version 3](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Go version](https://img.shields.io/badge/Go-1.27.1-00ADD8)
 [![Checks](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml/badge.svg)](https://github.com/Roonil03/QuantaSpindle/actions/workflows/checks.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/Roonil03/QuantaSpindle.svg)](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.1)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Roonil03/QuantaSpindle.svg)](https://pkg.go.dev/github.com/Roonil03/QuantaSpindle@v0.1.2)
 
 QuantaSpindle is a Go library and CLI for reproducible synthetic financial market scenarios. It provides bounded CPU simulation and an optional native CUDA backend, with ordered results, cancellation, and explicit model assumptions.
 
-The CLI on `main` chooses CPU or CUDA before generating a run's output. It keeps the requested financial model, seed and output fields. The execution backend determines the random generator, so pin `-backend cpu` or `-backend cuda` when replaying a run. The published v0.1.1 CLI defaults to CPU.
+The v0.1.2 CLI chooses CPU or CUDA before generating a run's output. It keeps the requested financial model, seed and output fields. The execution backend determines the random generator, so pin `-backend cpu` or `-backend cuda` when replaying a run. The v0.1.1 CLI defaults to CPU.
 
 ## Install and run
 
@@ -16,17 +16,17 @@ Use the official Go 1.27.1 toolchain or a later supported release. There are no 
 Install the tagged library in your Go module:
 
 ```sh
-go get github.com/Roonil03/QuantaSpindle@v0.1.1
+go get github.com/Roonil03/QuantaSpindle@v0.1.2
 ```
 
 Install and run the CLI:
 
 ```sh
-go install github.com/Roonil03/QuantaSpindle/cmd/quantaspindle@v0.1.1
+go install github.com/Roonil03/QuantaSpindle/cmd/quantaspindle@v0.1.2
 quantaspindle -paths 10000 -steps 252 -seed 42 -workers 4 -batch 128 -summary-only
 ```
 
-To use automatic selection from a checkout of `main`, run:
+To build and test automatic selection from a checkout, run:
 
 ```sh
 go test ./...
@@ -36,7 +36,7 @@ go run ./cmd/quantaspindle -backend auto -paths 262144 -steps 252 -seed 42 -summ
 go build ./cmd/quantaspindle
 ```
 
-To install the CLI with automatic selection directly from the public branch, use `go install github.com/Roonil03/QuantaSpindle/cmd/quantaspindle@main`. Its first JSON record identifies the requested and selected backend. A CPU-only machine can use the same command.
+The first JSON record identifies the requested and selected backend. A CPU-only machine can use the same tagged CLI installation.
 
 CLI output is newline-delimited JSON. The first record contains configuration and toolchain provenance. Scenario records follow in ID order, then a summary. `-summary-only` omits individual records. A failed run emits an error, returns a nonzero exit status, and may already have delivered a prefix. It never emits a successful final summary after failure. `-timeout 30s` bounds the run. Interrupting the process cancels work.
 
@@ -70,7 +70,7 @@ func main() {
 - **Outputs:** final prices, simple returns, annualized sample volatility of step log returns, and maximum fractional drawdown on the sampled grid. Full paths are optional on CPU.
 - **CPU:** single-asset and correlated multiasset GBM, optional discrete Markov regimes, and scenario streams unaffected by worker count or batch partition.
 - **CUDA:** actual FP64 kernels for one asset with fixed drift and volatility. No supplied correlation, regimes, or stored paths. An explicit CUDA selection never falls back to CPU.
-- **Performance:** the v0.1.1 CUDA runner beat the fastest measured CPU configuration on the two largest tested workloads; CPU won the three smaller cases. Full timings and test settings appear below, with [complete methodology and limits](docs/cuda-performance.md).
+- **Performance:** a prepared GPU reduced measured request latency at 4,096 and 16,384 scenarios, while CPU was faster when GPU setup was spread across only six requests. Cold automatic calls chose CPU at those sizes and CUDA at 524,288. [Startup methodology and limits](docs/cuda-startup.md) and the separately scoped [v0.1.1 measurements](docs/cuda-performance.md) record the complete timings.
 - **Interpretation:** presets are illustrative and uncalibrated. Scenarios follow caller assumptions; they are not forecasts. VaR/expected shortfall are finite-sample estimates, and the impact overlay is model dependent.
 - **Scope:** no jumps, volatility clustering, market-data loading, dividends, financing, or transaction matching. No FPGA execution, supported board, vendor emulation, or measured FPGA result.
 - **Replay:** scoped to the same implementation, backend, and toolchain; CUDA additionally requires the same runner build and device. CPU and CUDA use different generators and are compared statistically.
@@ -85,7 +85,7 @@ Inputs are validated before workers start. Limits include 256 assets, four regim
 
 ## Optional CUDA
 
-The Go adapter calls a separately built CUDA C++ runner. With `&cuda.Backend{}`, one child process serves all batches in a `Run`. A service handling successive requests can instead call `Prepare` once and pass its result to `hybrid.Run`. This keeps the initialized GPU available until the service closes it. Ordinary CPU builds use the Go standard library alone. [Setup and service example](docs/cuda.md#automatic-selection-and-prepared-cuda-on-main)
+The Go adapter calls a separately built CUDA C++ runner. With `&cuda.Backend{}`, one child process serves all batches in a `Run`. A service handling successive requests can instead call `Prepare` once and pass its result to `hybrid.Run`. This keeps the initialized GPU available until the service closes it. Ordinary CPU builds use the Go standard library alone. [Setup and service example](docs/cuda.md#automatic-selection-and-prepared-cuda-v012)
 
 ```powershell
 # Run in a Visual Studio x64 developer shell.
@@ -110,9 +110,9 @@ go run ./cmd/qsbench -backend cpu
 
 The race detector needs cgo and a supported C compiler. It covers Go concurrency, not GPU memory accesses. Conditional hardware tests skip without `QS_CUDA_RUNNER`; setting it makes device failures fail the tests. Analytical GBM moments, empirical innovation correlations, replay, regimes, cancellation, backend validation, risk, impact, and native protocol errors have synthetic tests.
 
-### Automatic selection on main
+### v0.1.2 automatic selection
 
-Five trials on an RTX 3060 Laptop GPU and i9-11900H compared single-asset workloads of 252 steps. Times are median milliseconds per request. Cold calls include backend selection, any required GPU startup, and shutdown. Ready calls use an already prepared service. The last column includes preparing that service once, running six requests, and closing it, divided by six.
+Five trials on an RTX 3060 Laptop GPU (6,144 MiB) and i9-11900H (8 cores/16 logical CPUs), using Go 1.27.1 and CUDA 12.4.131 in a Linux container, compared single-asset FP64 workloads of 252 steps. Times are median milliseconds per request. Cold calls include backend selection, any required GPU startup, and shutdown. Ready calls use an already prepared service. The last column includes preparing that service once, running six requests, and closing it, divided by six. CLI startup and JSON encoding are excluded.
 
 | Scenarios | v0.1.1 cold CUDA | Fastest tested CPU | Cold automatic | Ready automatic | Six requests including setup, per request |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -121,7 +121,7 @@ Five trials on an RTX 3060 Laptop GPU and i9-11900H compared single-asset worklo
 | 16,384 | 147.18 | 26.75 | 29.24 CPU | 10.44 CUDA | 34.66 |
 | 524,288 | 407.64 | 810.01 | 417.57 CUDA | 282.18 CUDA | 311.10 |
 
-At 4,096 and 16,384 scenarios, routing to an already prepared GPU gave a 2.45× and 2.56× speedup over the fastest measured CPU medians. CPU was faster when setup was spread across only six requests at either size. Fresh forced CUDA took 138.90, 138.80, 139.22 and 395.41 ms in workload order. Its trial ranges overlapped v0.1.1. [Method and trial ranges](docs/cuda-startup.md) · [All 380 latency samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
+At 4,096 and 16,384 scenarios, routing to an already prepared GPU gave 2.45× and 2.56× ratios over the fastest measured CPU medians. CPU was faster when setup was spread across only six requests at either size. Fresh forced CUDA took 138.90, 138.80, 139.22 and 395.41 ms in workload order; its trial ranges overlapped v0.1.1 at every size, so no cold CUDA improvement over v0.1.1 is established. These shared-laptop samples do not establish statistical significance or a general crossover. Measurements used [source `2db2704`](https://github.com/Roonil03/QuantaSpindle/commit/2db27040b08b6094766196bf0d93b99e2114093b). [Method and trial ranges](docs/cuda-startup.md) · [All 380 latency samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
 
 ### v0.1.1 full-run latency
 
