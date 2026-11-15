@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Target version: v0.1.0. A version is released only after its checks and review pass. The owner will decide when to make the repository public.
+## v0.1.0 - 2026-11-15
 
 ### Added
 
@@ -20,10 +20,12 @@ Target version: v0.1.0. A version is released only after its checks and review p
 - Passed rebuilt native RTX 3060 CUDA correctness tests, including replay, analytical and CPU moment checks, malformed requests, output limits, and process cancellation.
 - Recorded five-trial CPU scaling measurements and a separate standard Go PGO experiment with explicit limits in docs/validation.md.
 - Passed real GPU tests in a separately identified CUDA 12.4 Linux container and recorded matched five-trial CPU/CUDA batch measurements. The tested runner did not beat CPU median full execution time at those batch sizes.
-- Passed GitHub Actions checks on the reviewed CLI correction.
+- Passed GitHub Actions CPU checks on delivery commit `19779c1` (run 43687073691), and authenticated private consumer download at that commit.
 
 ### Known limitations
 
 - Public module fetching and pkg.go.dev indexing are pending repository visibility and release validation.
 - No private vulnerability reporting route has been verified.
+- CUDA supports one asset with constant GBM parameters, without regimes, correlation or stored paths.
+- Market calibration is not provided.
 - No FPGA board, vendor emulation, or bitstream has been validated.
