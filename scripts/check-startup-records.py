@@ -30,6 +30,7 @@ for paths in paths_expected:
         raise ValueError(f"incomplete CPU sweep at {paths}")
 expected = {r["config"]["Paths"]: r["summary"] for r in baseline}
 cpu = {r["config"]["Paths"]: r["summary"] for r in current if r["mode"] == "cpu-default"}
+phased = any("phase" in r for records in (baseline, current, alternative) for r in records)
 seen = set()
 for filename, records in zip(sys.argv[1:4], (baseline, current, alternative)):
     for record in records:
@@ -39,6 +40,17 @@ for filename, records in zip(sys.argv[1:4], (baseline, current, alternative)):
         seen.add(key)
         paths = record["config"]["Paths"]
         summary = record["summary"]
+        if phased:
+            if records is baseline:
+                expected_phase, expected_block = "cold-pair", 1 if record["trial"] % 2 else 2
+            elif records is alternative:
+                expected_phase, expected_block = "tagged-native-alternative", 3
+            elif record["mode"] == "cuda-cold":
+                expected_phase, expected_block = "cold-pair", 2 if record["trial"] % 2 else 1
+            else:
+                expected_phase, expected_block = "main", 4
+            if record.get("phase") != expected_phase or record.get("block_order") != expected_block:
+                raise ValueError(f"incorrect timing phase/order: {key}")
         if "operations" in record:
             operations = record["operations"]
             runs = record["run_elapsed_ns"]

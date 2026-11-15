@@ -38,23 +38,27 @@ sha256sum "$out/qsbench-v0.1.1" "$out/runner-v0.1.1" local/linux/qsstartup local
 : > "$out/baseline.jsonl"
 : > "$out/measure.jsonl"
 : > "$out/alternative.jsonl"
-# Alternate complete old/new trial blocks. Each invocation has its own discarded
-# warm-up, but the CUDA Run/session is cold for every one-off sample.
+# Pair CUDA-only release/current blocks before the CPU sweep. Alternate which
+# build runs first; both blocks have only CUDA workloads and their own discarded
+# warm-up. A new process/session remains cold for every one-off sample.
 trial=1
 while [ "$trial" -le "$trials" ]; do
+  block=1
   for side in $(if [ $((trial % 2)) -eq 1 ]; then echo baseline current; else echo current baseline; fi); do
     if [ "$side" = baseline ]; then
       "$out/qsbench-v0.1.1" -backend cuda -cuda-runner "$out/runner-v0.1.1" -paths "$paths" -batches 16384 -trials 1 > "$out/baseline-trial.jsonl"
-      python3 -c 'import json,sys; t=int(sys.argv[1]); [print(json.dumps(dict(json.loads(l), trial=t, mode="cuda-v0.1.1", source="v0.1.1"))) for l in sys.stdin]' "$trial" < "$out/baseline-trial.jsonl" >> "$out/baseline.jsonl"
+      python3 -c 'import json,sys; t,b=map(int,sys.argv[1:]); [print(json.dumps(dict(json.loads(l), trial=t, mode="cuda-v0.1.1", source="v0.1.1", phase="cold-pair", block_order=b))) for l in sys.stdin]' "$trial" "$block" < "$out/baseline-trial.jsonl" >> "$out/baseline.jsonl"
     else
-      local/linux/qsstartup -cuda-runner /work/local/linux/quantaspindle-cuda -paths "$paths" -trials 1 -repeats "$repeats" -label "working-tree trial $trial" > "$out/current-trial.jsonl"
-      python3 -c 'import json,sys; t=int(sys.argv[1]); [print(json.dumps(dict(json.loads(l), trial=t))) for l in sys.stdin]' "$trial" < "$out/current-trial.jsonl" >> "$out/measure.jsonl"
-      # Actually test the current Go adapter with the unchanged tagged native
-      # runner as a source-level alternative, rather than merely proposing it.
-      local/linux/qsstartup -cuda-runner "$out/runner-v0.1.1" -modes cuda-cold -paths "$paths" -trials 1 -label current-adapter-tagged-native > "$out/alternative-trial.jsonl"
-      python3 -c 'import json,sys; t=int(sys.argv[1]); [print(json.dumps(dict(json.loads(l), trial=t))) for l in sys.stdin]' "$trial" < "$out/alternative-trial.jsonl" >> "$out/alternative.jsonl"
+      local/linux/qsstartup -cuda-runner /work/local/linux/quantaspindle-cuda -modes cuda-cold -paths "$paths" -trials 1 -label "cold-pair trial $trial" > "$out/current-cold-trial.jsonl"
+      python3 -c 'import json,sys; t,b=map(int,sys.argv[1:]); [print(json.dumps(dict(json.loads(l), trial=t, phase="cold-pair", block_order=b))) for l in sys.stdin]' "$trial" "$block" < "$out/current-cold-trial.jsonl" >> "$out/measure.jsonl"
     fi
+    block=$((block+1))
   done
+  # Actually test the current adapter with unchanged tagged native source.
+  local/linux/qsstartup -cuda-runner "$out/runner-v0.1.1" -modes cuda-cold -paths "$paths" -trials 1 -label current-adapter-tagged-native > "$out/alternative-trial.jsonl"
+  python3 -c 'import json,sys; t=int(sys.argv[1]); [print(json.dumps(dict(json.loads(l), trial=t, phase="tagged-native-alternative", block_order=3))) for l in sys.stdin]' "$trial" < "$out/alternative-trial.jsonl" >> "$out/alternative.jsonl"
+  local/linux/qsstartup -cuda-runner /work/local/linux/quantaspindle-cuda -modes cpu-default,cpu,cuda-reuse,auto-cold,auto-reuse -paths "$paths" -trials 1 -repeats "$repeats" -label "main trial $trial" > "$out/current-trial.jsonl"
+  python3 -c 'import json,sys; t=int(sys.argv[1]); [print(json.dumps(dict(json.loads(l), trial=t, phase="main", block_order=4))) for l in sys.stdin]' "$trial" < "$out/current-trial.jsonl" >> "$out/measure.jsonl"
   trial=$((trial+1))
 done
 {

@@ -35,9 +35,13 @@
 // across batches. Batch-only custom backends keep their original lifecycle.
 // Ordinary CPU builds require neither CUDA nor cgo.
 //
-// Performance is workload and environment dependent. Measure complete Run
-// latency including session startup and close; kernel time alone is not an
-// end-to-end comparison. See the repository documentation for tested workloads,
-// measured results, reproduction commands, and backend replay limits:
-// https://github.com/Roonil03/QuantaSpindle/blob/v0.1.1/README.md.
+// The hybrid subpackage selects an execution backend for each run and reports
+// the choice. Its policy considers model support, workload size, step count,
+// and whether the caller supplied a prepared CUDA service. Use an explicit
+// backend when replay requires a particular random generator.
+//
+// Compare complete call latency. For a reusable CUDA service, account for
+// preparation and shutdown when measuring a sequence of calls. Benchmarks and
+// reproduction commands are in the repository README:
+// https://github.com/Roonil03/QuantaSpindle.
 package quantaspindle
