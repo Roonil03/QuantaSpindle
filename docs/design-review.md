@@ -71,3 +71,9 @@ Proceed with the CPU foundation and narrowly scoped real CUDA runner. The princi
 - Queueing multiple Go workers does not execute concurrent kernels in one session. Start with one worker and measure the intended workload, including startup and teardown.
 - The model, FP64 precision, scenario ID mapping, replay scope, bounded output, error propagation, and explicit CUDA capability rejection remain release contracts. Optimization must pass the analytical and protocol checks before any performance claim.
 - The original v0.1.0 source/tag and its historical measurements are immutable. Follow-up experiments belong to v0.1.1 and are recorded separately in [CUDA performance](cuda-performance.md).
+
+## Selecting a backend for a run
+
+The hybrid dispatcher makes one choice before the first result reaches the sink. The CPU can handle regimes, correlated assets and stored paths. CUDA can handle a single asset with fixed parameters and terminal summaries. Changing the financial model to fit the accelerator would change the question being simulated. Instead, selection checks the model and the cost of starting CUDA, then records the execution backend for replay. A failure after delivery returns the completed prefix and an error.
+
+An explicitly prepared service can keep its CUDA process between requests. This changes the latency of subsequent calls and gives the application ownership of the process lifetime. The [startup measurements](cuda-startup.md) distinguish fresh runs, calls on a prepared service, and the time to serve a complete sequence including setup and shutdown.

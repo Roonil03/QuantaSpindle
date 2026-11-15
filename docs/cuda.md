@@ -68,6 +68,41 @@ or a failing runner fails the tests explicitly.
 - `Backend.Timeout` bounds each request/response exchange, defaulting to five minutes. Caller cancellation terminates the child. Requests waiting for the session and active work remain subject to cancellation. The whole-run CLI timeout also bounds the run.
 - Each response has its exact expected size; retained stderr is bounded to 16 KiB. A failed or canceled batch returns no partial scenarios. `Run` may already have delivered an earlier successful prefix. Failed runs return an error and cannot report a successful final summary.
 
+## Automatic selection and prepared CUDA on main
+
+The CLI defaults to `-backend auto`. It chooses one backend for the entire run. Use `-backend cpu` or `-backend cuda` to request a specific generator. On a CPU selection, the full CPU model is available, including correlations, regimes and stored paths. On a CUDA selection, the requested financial parameters pass through to the FP64 kernel. Which backend executed the run matters for replay.
+
+The cold policy considers CUDA at 262,144 or more scenarios with at least 252 steps. The prepared policy considers it at 4,096 or more scenarios with the same step minimum. These thresholds are heuristics for this implementation. The measurements use 252 steps on one laptop. The CLI uses one worker and batches up to 16,384 for CUDA unless the configuration file or flags supply those settings. The metadata contains the original `config`, the effective `execution_config`, the selected `backend`, and the `selection` reason.
+
+For an eligible CUDA job, selection executes its first batch and keeps those results for delivery. A missing runner or classified device initialization failure can therefore select CPU before the sink sees a scenario. Cancellation, malformed results and numerical failures propagate. A failure on a later batch returns the successfully delivered prefix. One run never mixes CPU and GPU random streams.
+
+For a single library call, use `hybrid.Run(ctx, cfg, hybrid.Options{}, sink)`. It returns the run summary, a routing decision, and an error. With the zero options, it uses the normal runner lookup and respects the worker and batch sizes in `cfg`. The `hybrid` package is at `github.com/Roonil03/QuantaSpindle/hybrid`.
+
+A service can initialize its CUDA device before accepting requests. Keep the prepared object for the service lifetime. Pass it to each request that may use the GPU and close it at shutdown:
+
+```go
+gpu := &cuda.Backend{}
+prepared, err := gpu.Prepare(serviceCtx)
+if err != nil && !errors.Is(err, cuda.ErrUnavailable) {
+    return err
+}
+if prepared != nil {
+    defer prepared.Close()
+}
+options := hybrid.Options{Prepared: prepared, CUDAWorkers: 1, CUDABatchSize: 16384}
+for _, cfg := range requests {
+    summary, choice, err := hybrid.Run(serviceCtx, cfg, options, nil)
+    if err != nil {
+        return err
+    }
+    fmt.Println(choice.Backend, summary.Scenarios)
+}
+```
+
+`Prepare` opens the runner and executes a one-scenario, one-step initialization probe. The probe contributes to preparation time. User batch and scenario counters start with real requests. A prepared process serves one run at a time, retains allocations up to its largest batch and releases them on close. A caller waiting to use it can cancel. Pass `prepared` directly to `quantaspindle.Run` for explicit CUDA execution. The [startup benchmark](cuda-startup.md) measures preparation, the first real request, later requests and shutdown.
+
+The context passed to `Prepare` governs the service lifetime. Use a separate request context for each `Run`. An exchange failure invalidates the runner. A later explicit CUDA run can reopen it. `Warm()` is a nonblocking snapshot: it is false during recovery and after closure, and becomes true after a successful batch on the current process. When the distinction affects routing, `BeginWarmRun` checks readiness while acquiring the exclusive run session and returns a nil session if the process has cooled. The lease's `WasWarm()` records its state at acquisition. Hybrid uses this distinction to keep a queued small job from silently paying to restart CUDA.
+
 ## Mathematics, memory and replay
 
 The runner evaluates the same exact conditional FP64 GBM update, Welford
@@ -117,7 +152,7 @@ The historical v0.1.0 runner passed the conditional suite in a GPU-enabled Ubunt
 - `Stats()` sums successful batch timings. `WallTime` is the one-shot process invocation or streaming request/response exchange; `SessionLifetime` separately sums complete streaming session lifetimes, including startup, idle/sink time, teardown and failed sessions. Inspect session totals after `Run` returns. Concurrent durations are summed, so they are not necessarily elapsed run time.
 - Time the caller's complete `Run` for an end-to-end comparison: Go setup, process startup, device initialization, batches, transfers, decoding, aggregation, and close all count. Compilation and output JSON encoding are separate.
 
-Process startup still contributes once per run. The historical v0.1.0 one-shot runner did not beat CPU median full execution time at the measured batch sizes. The [v0.1.1 performance report](cuda-performance.md) records the separate lifecycle experiment; successful kernel execution alone is not evidence of speedup. Compare identical models, scenario counts, steps, precision, and output requirements, and disclose workers, batch size, warm-up policy, and timing boundaries.
+An ordinary CUDA backend pays startup once per run. A prepared backend pays it once per process, including any replacement after a failure. Read `SessionLifetime` after the prepared service closes to include its complete lifetime. The [v0.1.1 measurements](cuda-performance.md) compare per-run and one-shot execution. The [startup measurements](cuda-startup.md) compare cold requests, prepared requests and complete service lifetimes against CPU.
 
 Hardware tests cover actual device execution; same-backend repeatability and
 batch partition; analytical GBM terminal mean and variance; CPU/GPU distribution

@@ -2,6 +2,8 @@
 
 ## Select the source and workload
 
+- For automatic routing and repeated small jobs on `main`, follow the [CUDA startup experiment](cuda-startup.md). Its cold CUDA reference builds both the Go adapter and the native runner from the v0.1.1 tag. For each automatic result, record which backend produced the scenarios.
+- A service can pay for CUDA initialization before it receives a request. Include preparation and shutdown when comparing the whole service lifetime. Report later requests separately when measuring latency on an already prepared GPU.
 - Record the exact source commit/tag before building either runner or Go executable. Check out v0.1.0 in a separate local directory to reproduce historical one-shot measurements; never move its published tag.
 - For v0.1.1 lifecycle/optimization comparisons, use the matched experiment and commands in [CUDA performance](cuda-performance.md). Keep those results separate from the historical tables in [validation](validation.md).
 - Run both a single-batch case and a multibatch case. Per-run process reuse can amortize setup only when a run contains multiple batches; a warm-up run does not keep its process alive for the next run.
