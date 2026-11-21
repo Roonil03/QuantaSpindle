@@ -42,17 +42,17 @@ func RiskFromLosses(losses []float64, confidence float64) (RiskSummary, error) {
 		return r, fmt.Errorf("risk requires observations and confidence strictly between zero and one")
 	}
 	x := append([]float64(nil), losses...)
-	m2 := 0.0
+	maxLoss := 0.0
 	for i, v := range x {
 		if !finite(v) {
 			return r, fmt.Errorf("loss %d is not finite", i)
 		}
 		d := v - r.MeanLoss
 		r.MeanLoss += d / float64(i+1)
-		m2 += d * (v - r.MeanLoss)
+		maxLoss = math.Max(maxLoss, math.Abs(v))
 	}
 	if len(x) > 1 {
-		r.StdDevLoss = math.Sqrt(math.Max(m2, 0) / float64(len(x)-1))
+		r.StdDevLoss = riskStdDev(x, maxLoss)
 	}
 	if !finite(r.MeanLoss) || !finite(r.StdDevLoss) {
 		return r, fmt.Errorf("risk moments overflow")
@@ -68,6 +68,32 @@ func RiskFromLosses(losses []float64, confidence float64) (RiskSummary, error) {
 		return r, fmt.Errorf("expected shortfall overflow")
 	}
 	return r, nil
+}
+
+func riskStdDev(x []float64, maxLoss float64) float64 {
+	// Power-of-two scaling preserves nearby floats' spacing and brings even
+	// subnormal losses into a range where squared deviations are representable.
+	// Center about an observation before averaging to retain small spreads on
+	// large offsets, including a mean halfway between adjacent floats.
+	_, exponent := math.Frexp(maxLoss)
+	anchor := math.Ldexp(x[0], -exponent)
+	sum, correction := 0.0, 0.0
+	for _, v := range x {
+		y := (math.Ldexp(v, -exponent) - anchor) - correction
+		next := sum + y
+		correction = (next - sum) - y
+		sum = next
+	}
+	mean := sum / float64(len(x))
+	sum, correction = 0, 0
+	for _, v := range x {
+		d := (math.Ldexp(v, -exponent) - anchor) - mean
+		y := d*d - correction
+		next := sum + y
+		correction = (next - sum) - y
+		sum = next
+	}
+	return math.Ldexp(math.Sqrt(sum/float64(len(x)-1)), exponent)
 }
 
 func stableCeil(x float64) int {

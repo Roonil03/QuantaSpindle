@@ -48,6 +48,55 @@ func TestRiskConventions(t *testing.T) {
 	}
 }
 
+func TestRiskStandardDeviationAcrossScales(t *testing.T) {
+	next := math.Nextafter(1, 2)
+	large := 1e150
+	nextLarge := math.Nextafter(large, math.Inf(1))
+	tests := []struct {
+		name   string
+		losses []float64
+		want   float64
+	}{
+		{"tiny symmetric", []float64{-1e-170, 1e-170}, math.Sqrt2 * 1e-170},
+		{"tiny asymmetric", []float64{1e-170, 2e-170, 3e-170}, 1e-170},
+		{"tiny offset", []float64{1e-170, math.Nextafter(1e-170, 1)}, (math.Nextafter(1e-170, 1) - 1e-170) / math.Sqrt2},
+		{"adjacent", []float64{1, next}, (next - 1) / math.Sqrt2},
+		{"large offset", []float64{large, nextLarge}, (nextLarge - large) / math.Sqrt2},
+		{"large symmetric", []float64{-1e170, 1e170}, math.Sqrt2 * 1e170},
+		{"subnormal", []float64{-1e-310, 1e-310}, math.Sqrt2 * 1e-310},
+		{"smallest subnormal", []float64{0, math.SmallestNonzeroFloat64}, math.SmallestNonzeroFloat64},
+		{"constant", []float64{1e-170, 1e-170, 1e-170}, 0},
+		{"zero", []float64{0, 0}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, reverse := range []bool{false, true} {
+				losses := append([]float64(nil), tt.losses...)
+				if reverse {
+					for i, j := 0, len(losses)-1; i < j; i, j = i+1, j-1 {
+						losses[i], losses[j] = losses[j], losses[i]
+					}
+				}
+				r, err := RiskFromLosses(losses, .95)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tt.want == 0 {
+					if r.StdDevLoss != 0 {
+						t.Fatalf("StdDevLoss = %g, want zero", r.StdDevLoss)
+					}
+				} else if !finite(r.StdDevLoss) || math.Abs(r.StdDevLoss-tt.want)/tt.want > 4e-15 {
+					t.Fatalf("StdDevLoss = %.17g, want %.17g (reverse=%v)", r.StdDevLoss, tt.want, reverse)
+				}
+				returns, err := RiskFromReturns(losses, .95)
+				if err != nil || returns.StdDevLoss != r.StdDevLoss {
+					t.Fatalf("RiskFromReturns stddev = %g, want %g; error = %v", returns.StdDevLoss, r.StdDevLoss, err)
+				}
+			}
+		})
+	}
+}
+
 func TestSquareRootImpact(t *testing.T) {
 	m := SquareRootImpact{Volatility: .02, DailyVolume: 10000, Temporary: .5, Permanent: .25, HalfSpread: .001}
 	b, err := m.Execute(100, 100)
