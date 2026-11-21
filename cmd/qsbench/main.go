@@ -63,46 +63,9 @@ func run() error {
 			return err
 		}
 	}
-	type benchmarkCase struct {
-		mode   string
-		config qs.Config
-	}
-	var cases []benchmarkCase
-	for _, batch := range batchSizes {
-		counts := pathCounts
-		if len(counts) == 0 {
-			counts = []int{batch}
-		}
-		for _, count := range counts {
-			for _, mode := range strings.Split(*backendNames, ",") {
-				if mode != "cpu" && mode != "cuda" && mode != "cuda-batch" {
-					return fmt.Errorf("unknown backend %q", mode)
-				}
-				ws := []int{1}
-				if mode == "cpu" {
-					ws = workerCounts
-				}
-				for _, worker := range ws {
-					sizes := []int{batch}
-					if mode == "cpu" {
-						if *cpuBatch > 0 {
-							sizes = []int{*cpuBatch}
-						}
-						if len(cpuBatchSizes) > 0 {
-							sizes = cpuBatchSizes
-						}
-					}
-					for _, size := range sizes {
-						cfg := qs.DefaultConfig()
-						cfg.Paths, cfg.BatchSize, cfg.Workers, cfg.Steps = count, size, worker, *steps
-						if err := cfg.Validate(); err != nil {
-							return err
-						}
-						cases = append(cases, benchmarkCase{mode, cfg})
-					}
-				}
-			}
-		}
+	cases, err := buildCases(*backendNames, batchSizes, pathCounts, workerCounts, *cpuBatch, cpuBatchSizes, *steps)
+	if err != nil {
+		return err
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	// Warm each case once. Reverse the measured case order on alternate trials,
@@ -156,6 +119,69 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+type benchmarkCase struct {
+	mode   string
+	config qs.Config
+}
+
+// Include the complete effective config, including slice fields, in case identity.
+type caseKey struct {
+	mode   string
+	config string
+}
+
+// buildCases keeps the first occurrence of each effective mode/config pair so
+// every case receives one warm-up and one sample per trial in stable sweep order.
+func buildCases(backendNames string, batchSizes, pathCounts, workerCounts []int, cpuBatch int, cpuBatchSizes []int, steps int) ([]benchmarkCase, error) {
+	var cases []benchmarkCase
+	seen := make(map[caseKey]bool)
+	for _, batch := range batchSizes {
+		counts := pathCounts
+		if len(counts) == 0 {
+			counts = []int{batch}
+		}
+		for _, count := range counts {
+			for _, mode := range strings.Split(backendNames, ",") {
+				if mode != "cpu" && mode != "cuda" && mode != "cuda-batch" {
+					return nil, fmt.Errorf("unknown backend %q", mode)
+				}
+				ws := []int{1}
+				if mode == "cpu" {
+					ws = workerCounts
+				}
+				for _, worker := range ws {
+					sizes := []int{batch}
+					if mode == "cpu" {
+						if cpuBatch > 0 {
+							sizes = []int{cpuBatch}
+						}
+						if len(cpuBatchSizes) > 0 {
+							sizes = cpuBatchSizes
+						}
+					}
+					for _, size := range sizes {
+						cfg := qs.DefaultConfig()
+						cfg.Paths, cfg.BatchSize, cfg.Workers, cfg.Steps = count, size, worker, steps
+						if err := cfg.Validate(); err != nil {
+							return nil, err
+						}
+						encoded, err := json.Marshal(cfg)
+						if err != nil {
+							return nil, err
+						}
+						key := caseKey{mode, string(encoded)}
+						if !seen[key] {
+							seen[key] = true
+							cases = append(cases, benchmarkCase{mode, cfg})
+						}
+					}
+				}
+			}
+		}
+	}
+	return cases, nil
 }
 
 // Deliberately do not embed Backend: optional Run lifecycle methods must remain
