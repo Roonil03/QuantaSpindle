@@ -1,6 +1,6 @@
 # QuantaSpindle design review
 
-Recorded: 2026-11-15. The foundation review below preserves the original design decisions, including historical private-release assumptions. Current implementation, measured results, and public publication status are recorded in [validation](validation.md). The v0.1.1 amendment below supersedes the original per-batch process design. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
+Recorded: 2026-11-15. The foundation review below preserves the original design decisions, including historical private-release assumptions. Current implementation, measured results, and public publication status are recorded in [validation](validation.md). The implementation follow-up and CUDA lifecycle amendment below clarify the delivered contracts and supersede the original per-batch process design. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
 
 ## Scope and independent origin
 
@@ -63,6 +63,14 @@ Historical foundation publication assumptions (superseded by the public publicat
 ## Review outcome
 
 Proceed with the CPU foundation and narrowly scoped real CUDA runner. The principal risks are finite-sample tail uncertainty, user calibration/units, replay contracts, allocation growth, and native backend portability/startup overhead. Each has an explicit contract or validation gate above. Broader CUDA feature parity, calibration, advanced stochastic models, persistent GPU execution and FPGA execution remain future work until implemented and tested.
+
+## Implementation contract follow-up
+
+The original review above remains a design record. The implemented correlation factorization uses a fixed absolute tolerance of `1e-12` for symmetry, unit diagonal, negative pivots and zero-pivot residuals on normalized correlation matrices with entries in `[-1,1]` ([implementation](../config.go)). This is the current API's concrete tolerance contract.
+
+The risk API returns count, confidence, mean loss, sample standard deviation, VaR, expected shortfall and tail count ([`RiskSummary`](../risk.go)). VaR is the empirical quantile at the supplied confidence; arbitrary selected empirical quantiles from the original design are not exposed by this API.
+
+Persistent CUDA execution has been delivered and tested: v0.1.1 reuses one process across batches within a run, and v0.1.2 adds an explicitly prepared service that reuses the process across runs. These supersede the original outcome's future-work status for persistent GPU execution. The [performance experiment](cuda-performance.md) and [startup measurements](cuda-startup.md) record their separate timing boundaries and evidence.
 
 ## v0.1.1 CUDA lifecycle amendment
 
