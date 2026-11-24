@@ -97,6 +97,140 @@ func TestRiskStandardDeviationAcrossScales(t *testing.T) {
 	}
 }
 
+func TestRiskMomentsNearFloatLimit(t *testing.T) {
+	tests := []struct {
+		name                  string
+		losses                []float64
+		confidence            float64
+		mean, stddev, varLoss float64
+		shortfall             float64
+		tailCount             int
+	}{
+		{"opposite signs", []float64{-1e308, 1e308}, .5, 0, math.Sqrt2 * 1e308, -1e308, 1e308, 1},
+		{"opposite signs entire tail", []float64{-1e308, 1e308}, .25, 0, math.Sqrt2 * 1e308, -1e308, 0, 2},
+		{"positive mean", []float64{-1e308, 1e308, 1e308}, .1, 1e308 / 3, 2 / math.Sqrt(3) * 1e308, -1e308, 1e308 / 3, 3},
+		{"negative mean", []float64{-1e308, -1e308, 1e308}, .1, -1e308 / 3, 2 / math.Sqrt(3) * 1e308, -1e308, -1e308 / 3, 3},
+		{"cancellation residual", []float64{-1e308, 3, 1e308}, .1, 1, 1e308, -1e308, 1, 3},
+		{"mixed-sign tail", []float64{-1e308, -1e308, 1e308, 1e308}, .25, 0, math.Sqrt(4.0/3) * 1e308, -1e308, 1e308 / 3, 3},
+		{"maximum constant", []float64{math.MaxFloat64, math.MaxFloat64, math.MaxFloat64}, .25, math.MaxFloat64, 0, math.MaxFloat64, math.MaxFloat64, 3},
+		{"minimum constant", []float64{-math.MaxFloat64, -math.MaxFloat64, -math.MaxFloat64}, .25, -math.MaxFloat64, 0, -math.MaxFloat64, -math.MaxFloat64, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Every ordering must succeed: the running mean must not overflow
+			// merely because opposite-sign observations arrive consecutively.
+			var checkPermutations func([]float64, int)
+			checkPermutations = func(losses []float64, start int) {
+				if start < len(losses) {
+					for i := start; i < len(losses); i++ {
+						losses[start], losses[i] = losses[i], losses[start]
+						checkPermutations(losses, start+1)
+						losses[start], losses[i] = losses[i], losses[start]
+					}
+					return
+				}
+				r, err := RiskFromLosses(losses, tt.confidence)
+				if err != nil {
+					t.Fatalf("losses %v: %v", losses, err)
+				}
+				for _, field := range []struct {
+					name      string
+					got, want float64
+				}{
+					{"mean", r.MeanLoss, tt.mean},
+					{"standard deviation", r.StdDevLoss, tt.stddev},
+					{"VaR", r.VaR, tt.varLoss},
+					{"expected shortfall", r.ExpectedShortfall, tt.shortfall},
+				} {
+					if !finite(field.got) || (field.want == 0 && field.got != 0) || (field.want != 0 && math.Abs((field.got-field.want)/field.want) > 4e-15) {
+						t.Errorf("losses %v: %s = %.17g, want %.17g", losses, field.name, field.got, field.want)
+					}
+				}
+				if r.Count != len(losses) || r.TailCount != tt.tailCount || r.Confidence != tt.confidence {
+					t.Errorf("wrong risk counts/confidence: %+v", r)
+				}
+				returns := make([]float64, len(losses))
+				for i, loss := range losses {
+					returns[i] = -loss
+				}
+				fromReturns, err := RiskFromReturns(returns, tt.confidence)
+				if err != nil || fromReturns != r {
+					t.Errorf("RiskFromReturns = %+v, %v; want %+v", fromReturns, err, r)
+				}
+			}
+			checkPermutations(append([]float64(nil), tt.losses...), 0)
+		})
+	}
+	if _, err := RiskFromLosses([]float64{-math.MaxFloat64, math.MaxFloat64}, .5); err == nil {
+		t.Fatal("unrepresentable standard deviation accepted")
+	}
+}
+
+func TestRiskSubnormalMeanRounding(t *testing.T) {
+	for _, losses := range [][]float64{
+		{7 * math.SmallestNonzeroFloat64, 0, 0},
+		{0, 7 * math.SmallestNonzeroFloat64, 0},
+		{0, 0, 7 * math.SmallestNonzeroFloat64},
+		{-7 * math.SmallestNonzeroFloat64, 0, 0},
+		{0, -7 * math.SmallestNonzeroFloat64, 0},
+		{0, 0, -7 * math.SmallestNonzeroFloat64},
+	} {
+		r, err := RiskFromLosses(losses, .1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 2 * math.SmallestNonzeroFloat64
+		if losses[0] < 0 || losses[1] < 0 || losses[2] < 0 {
+			want = -want
+		}
+		if r.MeanLoss != want || r.ExpectedShortfall != want {
+			t.Errorf("losses %v: mean/shortfall = %g/%g, want %g", losses, r.MeanLoss, r.ExpectedShortfall, want)
+		}
+	}
+}
+
+func TestRiskOrdinaryMeansAndShortfalls(t *testing.T) {
+	for _, tt := range []struct {
+		losses          []float64
+		mean, shortfall float64
+	}{
+		{[]float64{1, 2, 3, 4}, 2.5, 3.5},
+		{[]float64{-4, -3, -2, -1}, -2.5, -1.5},
+		{[]float64{-4, -2, 1, 3}, -.5, 2},
+		{[]float64{.1, .2, .3, .4}, .25, .35},
+		{[]float64{math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64}, math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64},
+	} {
+		r, err := RiskFromLosses(tt.losses, .5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !finite(r.MeanLoss) || !finite(r.ExpectedShortfall) || math.Abs(r.MeanLoss-tt.mean) > 4e-15*math.Abs(tt.mean) || math.Abs(r.ExpectedShortfall-tt.shortfall) > 4e-15*math.Abs(tt.shortfall) {
+			t.Errorf("losses %v: mean/shortfall = %.17g/%.17g, want %.17g/%.17g", tt.losses, r.MeanLoss, r.ExpectedShortfall, tt.mean, tt.shortfall)
+		}
+	}
+}
+
+func BenchmarkRiskFromLossesMoments(b *testing.B) {
+	for _, size := range []int{16, 1024} {
+		losses := make([]float64, size)
+		for i := range losses {
+			losses[i] = float64((i*37)%101-50) / 100
+		}
+		name := "16"
+		if size == 1024 {
+			name = "1024"
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := RiskFromLosses(losses, .95); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestSquareRootImpact(t *testing.T) {
 	m := SquareRootImpact{Volatility: .02, DailyVolume: 10000, Temporary: .5, Permanent: .25, HalfSpread: .001}
 	b, err := m.Execute(100, 100)
