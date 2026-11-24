@@ -47,10 +47,9 @@ func RiskFromLosses(losses []float64, confidence float64) (RiskSummary, error) {
 		if !finite(v) {
 			return r, fmt.Errorf("loss %d is not finite", i)
 		}
-		d := v - r.MeanLoss
-		r.MeanLoss += d / float64(i+1)
 		maxLoss = math.Max(maxLoss, math.Abs(v))
 	}
+	r.MeanLoss = riskMean(x, maxLoss)
 	if len(x) > 1 {
 		r.StdDevLoss = riskStdDev(x, maxLoss)
 	}
@@ -60,14 +59,72 @@ func RiskFromLosses(losses []float64, confidence float64) (RiskSummary, error) {
 	sort.Float64s(x)
 	r.VaR = x[max(1, stableCeil(confidence*float64(len(x))))-1]
 	r.TailCount = max(1, stableCeil((1-confidence)*float64(len(x))))
-	for i := 0; i < r.TailCount; i++ {
-		v := x[len(x)-1-i]
-		r.ExpectedShortfall += (v - r.ExpectedShortfall) / float64(i+1)
-	}
+	r.ExpectedShortfall = riskMean(x[len(x)-r.TailCount:], maxLoss)
 	if !finite(r.ExpectedShortfall) {
 		return r, fmt.Errorf("expected shortfall overflow")
 	}
 	return r, nil
+}
+
+func riskMean(x []float64, maxLoss float64) float64 {
+	sum, correction := 0.0, 0.0
+	for _, v := range x {
+		sum, correction = riskAdd(sum, correction, v)
+		if !finite(sum) || !finite(correction) {
+			return riskScaledMean(x, maxLoss)
+		}
+	}
+	if total := sum + correction; finite(total) {
+		return total / float64(len(x))
+	}
+	return riskScaledMean(x, maxLoss)
+}
+
+func riskScaledMean(x []float64, maxLoss float64) float64 {
+	// Scaling by the count, rather than the largest observation, leaves small
+	// residuals intact when large opposite-sign losses cancel. An extra bit of
+	// headroom keeps intermediate sums away from overflow even after rounding.
+	n := float64(len(x))
+	_, exponent := math.Frexp(n)
+	exponent++
+	sum, correction := 0.0, 0.0
+	residual, residualCorrection := 0.0, 0.0
+	for _, v := range x {
+		scaled := math.Ldexp(v, -exponent)
+		sum, correction = riskAdd(sum, correction, scaled)
+		// Count scaling can round subnormal terms. Retain the discarded bits
+		// in their original units so constant subnormal samples stay nonzero.
+		if math.Abs(scaled) < 0x1p-1022 {
+			remainder := v - math.Ldexp(scaled, exponent)
+			residual, residualCorrection = riskAdd(residual, residualCorrection, remainder)
+		}
+	}
+	// Recombine discarded subnormal bits before dividing, so separately
+	// rounded pieces cannot change a subnormal mean by a whole representable
+	// step. If restoring the sum overflows, its mean is too large for these
+	// tiny residual bits to affect it; normalize and divide before rescaling.
+	total := sum + correction
+	mean := 0.0
+	if restored := math.Ldexp(total, exponent); finite(restored) {
+		restored, restoredCorrection := riskAdd(restored, residualCorrection, residual)
+		mean = (restored + restoredCorrection) / n
+	} else {
+		fraction, sumExponent := math.Frexp(total)
+		mean = math.Ldexp(fraction/n, exponent+sumExponent)
+	}
+	// A mean is bounded by the largest magnitude observation. Rounding at
+	// MaxFloat64 must not turn a representable mean into an infinity.
+	return math.Max(-maxLoss, math.Min(maxLoss, mean))
+}
+
+func riskAdd(sum, correction, v float64) (float64, float64) {
+	next := sum + v
+	if math.Abs(sum) >= math.Abs(v) {
+		correction += (sum - next) + v
+	} else {
+		correction += (v - next) + sum
+	}
+	return next, correction
 }
 
 func riskStdDev(x []float64, maxLoss float64) float64 {
