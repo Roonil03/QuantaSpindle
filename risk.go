@@ -3,6 +3,8 @@ package quantaspindle
 import (
 	"fmt"
 	"math"
+	"math/big"
+	"math/bits"
 	"sort"
 )
 
@@ -168,12 +170,36 @@ func PortfolioLoss(initial, final, holdings []float64) (float64, error) {
 	if len(initial) == 0 || len(final) != len(initial) || len(holdings) != len(initial) {
 		return 0, fmt.Errorf("portfolio dimensions mismatch")
 	}
-	loss := 0.0
+	loss, correction := 0.0, 0.0
+	overflow := false
 	for i, p := range initial {
 		if !finite(p) || p <= 0 || !finite(final[i]) || final[i] <= 0 || !finite(holdings[i]) {
 			return 0, fmt.Errorf("invalid portfolio input %d", i)
 		}
-		loss += holdings[i] * (p - final[i])
+		term := holdings[i] * (p - final[i])
+		if !finite(term) {
+			return 0, fmt.Errorf("portfolio loss term %d overflow", i)
+		}
+		if !overflow {
+			loss, correction = riskAdd(loss, correction, term)
+			overflow = !finite(loss) || !finite(correction)
+		}
+	}
+	loss += correction
+	if overflow || !finite(loss) {
+		// A float64 spans 2098 binary places, including subnormals. This
+		// precision holds an exact sum of any slice of finite float64 terms,
+		// including the extra bits needed for its element count. Only the rare
+		// overflowing running sum pays for multiprecision arithmetic.
+		precision := uint(2098 + bits.Len(uint(len(initial))))
+		var sum, term big.Float
+		sum.SetPrec(precision)
+		term.SetPrec(precision)
+		for i, p := range initial {
+			term.SetFloat64(holdings[i] * (p - final[i]))
+			sum.Add(&sum, &term)
+		}
+		loss, _ = sum.Float64()
 	}
 	if !finite(loss) {
 		return 0, fmt.Errorf("portfolio loss overflow")

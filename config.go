@@ -3,6 +3,7 @@ package quantaspindle
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"runtime"
 )
 
@@ -199,14 +200,59 @@ func correlationFactor(c [][]float64, n int) ([][]float64, error) {
 			}
 			if i == j {
 				if s < -tol {
-					return nil, fmt.Errorf("correlation is not positive semidefinite")
+					return correlationFactorPrecise(c, l, tol)
 				}
 				l[i][j] = math.Sqrt(math.Max(s, 0))
 			} else if l[j][j] > 0 {
 				l[i][j] = s / l[j][j]
 			} else if math.Abs(s) > tol {
+				return correlationFactorPrecise(c, l, tol)
+			}
+		}
+	}
+	return l, nil
+}
+
+// correlationFactorPrecise retries a failed Cholesky decomposition with enough
+// precision to avoid amplification of float64 rounding at nearly zero pivots.
+// Ordinary matrices keep the allocation and arithmetic costs of the float64
+// path. The retry remains O(n^3) time and O(n^2) space and uses the same PSD
+// tolerance; it does not relax the acceptance threshold to hide cancellation.
+func correlationFactorPrecise(c, l [][]float64, tol float64) ([][]float64, error) {
+	n := len(c)
+	const precision = 256
+	factor := make([]big.Float, n*n)
+	for i := range factor {
+		factor[i].SetPrec(precision)
+	}
+	var s, product, magnitude, tolerance, negativeTolerance big.Float
+	for _, v := range []*big.Float{&s, &product, &magnitude, &tolerance, &negativeTolerance} {
+		v.SetPrec(precision)
+	}
+	tolerance.SetFloat64(tol)
+	negativeTolerance.Neg(&tolerance)
+	for i := 0; i < n; i++ {
+		for j := 0; j <= i; j++ {
+			s.SetFloat64(c[i][j])
+			for k := 0; k < j; k++ {
+				product.Mul(&factor[i*n+k], &factor[j*n+k])
+				s.Sub(&s, &product)
+			}
+			entry := &factor[i*n+j]
+			if i == j {
+				if s.Cmp(&negativeTolerance) < 0 {
+					return nil, fmt.Errorf("correlation is not positive semidefinite")
+				}
+				if s.Sign() < 0 {
+					s.SetInt64(0)
+				}
+				entry.Sqrt(&s)
+			} else if factor[j*n+j].Sign() > 0 {
+				entry.Quo(&s, &factor[j*n+j])
+			} else if magnitude.Abs(&s).Cmp(&tolerance) > 0 {
 				return nil, fmt.Errorf("correlation is not positive semidefinite")
 			}
+			l[i][j], _ = entry.Float64()
 		}
 	}
 	return l, nil

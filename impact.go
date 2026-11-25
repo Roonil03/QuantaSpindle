@@ -20,7 +20,8 @@ type SquareRootImpact struct {
 
 // Execution describes one signed trade. Positive quantity buys and consumes
 // cash; negative quantity sells and receives cash. Cost is adverse cash cost
-// relative to quantity*mid, including spread and temporary impact only.
+// relative to quantity*mid, including spread and temporary impact only. Cost is
+// computed from the modeled relative adjustment before prices are rounded.
 // Impact fractions and prices are model-dependent estimates. ParticipationRate
 // is abs(quantity)/DailyVolume, a fraction of daily liquidity, not a measured
 // intraday execution participation rate. TemporaryImpact and PermanentImpact are
@@ -69,16 +70,45 @@ func (m SquareRootImpact) Execute(mid, quantity float64) (Execution, error) {
 	}
 	sign := math.Copysign(1, quantity)
 	e.ParticipationRate = math.Abs(quantity) / m.DailyVolume
-	root := math.Sqrt(e.ParticipationRate)
-	base := m.Volatility * root
-	e.TemporaryImpact = m.Temporary * base
-	e.PermanentImpact = m.Permanent * base
+	e.TemporaryImpact = squareRootImpactFraction(m.Temporary, m.Volatility, math.Abs(quantity), m.DailyVolume)
+	e.PermanentImpact = squareRootImpactFraction(m.Permanent, m.Volatility, math.Abs(quantity), m.DailyVolume)
 	e.ExecutionPrice = mid * (1 + sign*(m.HalfSpread+e.TemporaryImpact))
 	e.PostTradeMid = mid * (1 + sign*e.PermanentImpact)
 	e.CashChange = -quantity * e.ExecutionPrice
-	e.Cost = quantity * (e.ExecutionPrice - mid)
+	e.Cost = impactCost(math.Abs(quantity), mid, m.HalfSpread+e.TemporaryImpact)
 	if !finite(e.ParticipationRate) || !finite(e.TemporaryImpact) || !finite(e.PermanentImpact) || !finite(e.ExecutionPrice) || e.ExecutionPrice <= 0 || !finite(e.PostTradeMid) || e.PostTradeMid <= 0 || !finite(e.CashChange) || !finite(e.Cost) {
 		return Execution{}, fmt.Errorf("impact produces invalid price or cash value")
 	}
 	return e, nil
+}
+
+// squareRootImpactFraction keeps the ratio and product exponents separate so
+// intermediate underflow or overflow cannot erase a representable impact.
+// All arguments are finite and nonnegative, and quantity and volume are positive.
+func squareRootImpactFraction(coefficient, volatility, quantity, volume float64) float64 {
+	if coefficient == 0 || volatility == 0 {
+		return 0
+	}
+	q, qe := math.Frexp(quantity)
+	v, ve := math.Frexp(volume)
+	exponent := qe - ve
+	if exponent%2 != 0 {
+		q *= 2
+		exponent--
+	}
+	c, ce := math.Frexp(coefficient)
+	s, se := math.Frexp(volatility)
+	return math.Ldexp(c*s*math.Sqrt(q/v), ce+se+exponent/2)
+}
+
+// impactCost multiplies finite nonnegative factors without prematurely rounding
+// an intermediate notional or price adjustment out of float64's range.
+func impactCost(quantity, mid, adjustment float64) float64 {
+	if adjustment == 0 {
+		return 0
+	}
+	q, qe := math.Frexp(quantity)
+	m, me := math.Frexp(mid)
+	a, ae := math.Frexp(adjustment)
+	return math.Ldexp(q*m*a, qe+me+ae)
 }
