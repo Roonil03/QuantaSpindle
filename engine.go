@@ -140,14 +140,17 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 				vol := sigma * sqrtDT
 				lr = mu*c.DT - (0.5*vol)*vol + vol*z
 			}
+			if !finite(lr) {
+				return Scenario{}, fmt.Errorf("scenario %d step %d asset %d numerical overflow/underflow", id, step, i)
+			}
 			factor := math.Exp(lr)
 			p := prices[i] * factor
-			// A subnormal exponential loses precision before multiplication;
-			// its underflow or overflow need not invalidate the final price.
-			if factor < 0x1p-1022 || !finite(factor) || p <= 0 || !finite(p) {
-				p = math.Exp(math.Log(prices[i]) + lr)
+			// Keep ordinary arithmetic, but avoid an exponential that loses
+			// range and extra rounding near the final price's range limits.
+			if factor < 0x1p-1022 || !finite(factor) || p <= 0x1p-1022 || p >= 0x1p1023 {
+				p = priceAfterLogReturn(prices[i], lr)
 			}
-			if !finite(lr) || !finite(p) || p <= 0 {
+			if !finite(p) || p <= 0 {
 				return Scenario{}, fmt.Errorf("scenario %d step %d asset %d numerical overflow/underflow", id, step, i)
 			}
 			prices[i] = p
@@ -191,6 +194,45 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 		}
 	}
 	return s, nil
+}
+
+// priceAfterLogReturn multiplies a positive finite price by exp(lr), for finite
+// lr, by keeping the price and exponential powers of two separate.
+func priceAfterLogReturn(price, lr float64) float64 {
+	// Beyond these bounds even the smallest/largest price cannot recover.
+	// Bound the conversion to an integer exponent as well.
+	if lr > 2048 {
+		return math.Inf(1)
+	}
+	if lr < -2048 {
+		return 0
+	}
+	const (
+		ln2Hi = 6.93147180369123816490e-01
+		ln2Lo = 1.90821492927058770002e-10
+	)
+	fraction, exponent := math.Frexp(price)
+	power := math.Round(lr * math.Log2E)
+	remainder := (lr - power*ln2Hi) - power*ln2Lo
+	// Expm1 and FMA retain small changes near the overflow boundary.
+	change := math.Expm1(remainder)
+	scaled := math.FMA(fraction, change, fraction)
+	exponent += int(power)
+	price = math.Ldexp(scaled, exponent)
+	if price <= 0x1p-1022 {
+		// A rounded mantissa may land exactly halfway between subnormal
+		// outputs. Only at such a midpoint, use its residual to recover
+		// the rounding direction before the final scaling.
+		units := math.Ldexp(scaled, exponent+1074)
+		if units-math.Floor(units) == 0.5 {
+			residual := math.FMA(fraction, change, fraction-scaled)
+			if residual != 0 {
+				scaled = math.Nextafter(scaled, math.Copysign(math.Inf(1), residual))
+				price = math.Ldexp(scaled, exponent)
+			}
+		}
+	}
+	return price
 }
 
 // scaledMoments maintains Welford moments in power-of-two normalized units.

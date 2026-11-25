@@ -145,3 +145,159 @@ func TestRunRejectsTypedNilBackend(t *testing.T) {
 		}
 	}
 }
+
+// referencePrice uses high-precision Taylor expansion and repeated squaring,
+// independent of the float64 logarithm and ln(2) reduction used by the engine.
+func referencePrice(price, lr float64) float64 {
+	const precision = 256
+	number := func(x float64) *big.Float { return new(big.Float).SetPrec(precision).SetFloat64(x) }
+	x := number(lr)
+	x.Quo(x, number(4096))
+	sum, term := number(1), number(1)
+	for n := 1; n <= 128; n++ {
+		term.Mul(term, x)
+		term.Quo(term, number(float64(n)))
+		sum.Add(sum, term)
+	}
+	for n := 0; n < 12; n++ {
+		sum.Mul(sum, sum)
+	}
+	sum.Mul(sum, number(price))
+	value, _ := sum.Float64()
+	return value
+}
+
+func TestPriceAfterLogReturnRange(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		initial, lr float64
+	}{
+		{"smallest underflow", math.SmallestNonzeroFloat64, -1},
+		{"smallest stays positive", math.SmallestNonzeroFloat64, -0.5},
+		{"smallest just above half", math.SmallestNonzeroFloat64, -math.Ln2},
+		{"smallest below half", math.SmallestNonzeroFloat64, math.Nextafter(-math.Ln2, math.Inf(-1))},
+		{"odd subnormal above half", 3 * math.SmallestNonzeroFloat64, -math.Ln2},
+		{"odd subnormal below half", 3 * math.SmallestNonzeroFloat64, math.Nextafter(-math.Ln2, math.Inf(-1))},
+		{"upper subnormal tiny positive", math.Nextafter(0x1p-1022, 0), 5e-17},
+		{"upper subnormal tiny negative", math.Nextafter(0x1p-1022, 0), -5e-17},
+		{"upper subnormal positive below half", math.Nextafter(0x1p-1022, 0), 1e-16},
+		{"upper subnormal negative below half", math.Nextafter(0x1p-1022, 0), -1e-16},
+		{"upper subnormal positive above half", math.Nextafter(0x1p-1022, 0), 1.2e-16},
+		{"upper subnormal negative above half", math.Nextafter(0x1p-1022, 0), -1.2e-16},
+		{"smallest normal shrinks below half", 0x1p-1022, -1e-16},
+		{"smallest normal shrinks above half", 0x1p-1022, -1.2e-16},
+		{"smallest grows", math.SmallestNonzeroFloat64, 1},
+		{"smallest recovers", math.SmallestNonzeroFloat64, 700},
+		{"smallest exponential overflow recovers", math.SmallestNonzeroFloat64, 1450},
+		{"smallest true overflow", math.SmallestNonzeroFloat64, 1455},
+		{"subnormal recovers", 0x1p-1030, 750},
+		{"normal recovers", 1e-300, 750},
+		{"exponential underflow recovers", 1e300, -750},
+		{"ordinary overflow boundary below", 1e300, math.Nextafter(math.Log(math.MaxFloat64/1e300), math.Inf(-1))},
+		{"ordinary overflow boundary", 1e300, math.Log(math.MaxFloat64 / 1e300)},
+		{"ordinary overflow boundary above", 1e300, math.Nextafter(math.Log(math.MaxFloat64/1e300), math.Inf(1))},
+		{"largest rounds finite", math.MaxFloat64, 5e-17},
+		{"largest overflows", math.MaxFloat64, 1e-16},
+		{"largest shrinks", math.MaxFloat64, -1e-16},
+		{"largest subnormal result", math.MaxFloat64, -1453},
+		{"largest underflow", math.MaxFloat64, -1454},
+		{"huge positive return", math.SmallestNonzeroFloat64, math.MaxFloat64},
+		{"huge negative return", math.MaxFloat64, -math.MaxFloat64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var want float64
+			switch tc.lr {
+			case math.MaxFloat64:
+				want = math.Inf(1)
+			case -math.MaxFloat64:
+				want = 0
+			default:
+				want = referencePrice(tc.initial, tc.lr)
+			}
+			got := priceAfterLogReturn(tc.initial, tc.lr)
+			if want <= 0x1p-1022 || math.IsInf(want, 1) || want == math.MaxFloat64 {
+				if got != want {
+					t.Fatalf("price %.17g, want %.17g", got, want)
+				}
+			} else if !finite(got) || math.Abs(got/want-1) > 1e-15 {
+				t.Fatalf("price %.17g, want %.17g", got, want)
+			}
+		})
+	}
+}
+
+func TestCPUPriceRangeLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		initial, lr float64
+	}{
+		{"smallest underflow", math.SmallestNonzeroFloat64, -1},
+		{"smallest stays positive", math.SmallestNonzeroFloat64, -0.5},
+		{"smallest just above half", math.SmallestNonzeroFloat64, -math.Ln2},
+		{"smallest below half", math.SmallestNonzeroFloat64, math.Nextafter(-math.Ln2, math.Inf(-1))},
+		{"odd subnormal above half", 3 * math.SmallestNonzeroFloat64, -math.Ln2},
+		{"odd subnormal below half", 3 * math.SmallestNonzeroFloat64, math.Nextafter(-math.Ln2, math.Inf(-1))},
+		{"upper subnormal tiny positive", math.Nextafter(0x1p-1022, 0), 5e-17},
+		{"upper subnormal tiny negative", math.Nextafter(0x1p-1022, 0), -5e-17},
+		{"upper subnormal positive below half", math.Nextafter(0x1p-1022, 0), 1e-16},
+		{"upper subnormal negative below half", math.Nextafter(0x1p-1022, 0), -1e-16},
+		{"upper subnormal positive above half", math.Nextafter(0x1p-1022, 0), 1.2e-16},
+		{"upper subnormal negative above half", math.Nextafter(0x1p-1022, 0), -1.2e-16},
+		{"smallest normal shrinks below half", 0x1p-1022, -1e-16},
+		{"smallest normal shrinks above half", 0x1p-1022, -1.2e-16},
+		{"smallest grows", math.SmallestNonzeroFloat64, 1},
+		{"smallest recovers", math.SmallestNonzeroFloat64, 700},
+		{"ordinary overflow boundary below", 1e300, math.Nextafter(math.Log(math.MaxFloat64/1e300), math.Inf(-1))},
+		{"ordinary overflow boundary", 1e300, math.Log(math.MaxFloat64 / 1e300)},
+		{"ordinary overflow boundary above", 1e300, math.Nextafter(math.Log(math.MaxFloat64/1e300), math.Inf(1))},
+		{"largest rounds finite", math.MaxFloat64, 5e-17},
+		{"largest overflows", math.MaxFloat64, 1e-16},
+		{"largest underflow", math.MaxFloat64, -1454},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := onePathConfig()
+			c.DT, c.StorePaths = 1, true
+			c.Assets[0] = Asset{InitialPrice: tc.initial, Mu: tc.lr}
+			want := referencePrice(tc.initial, tc.lr)
+			got, err := (CPU{}).Batch(context.Background(), c, 0, 1)
+			if want == 0 || !finite(want) {
+				if err == nil {
+					t.Fatalf("accepted unrepresentable price: %+v", got[0])
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			price := got[0].FinalPrices[0]
+			if want <= 0x1p-1022 || want == math.MaxFloat64 {
+				if price != want {
+					t.Fatalf("price %.17g, want %.17g", price, want)
+				}
+			} else if !finite(price) || math.Abs(price/want-1) > 1e-15 {
+				t.Fatalf("price %.17g, want %.17g", price, want)
+			}
+			if err := validateResult(got[0], 0, c); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCPUSubnormalPriceRecoversAfterExponentialOverflow(t *testing.T) {
+	c := onePathConfig()
+	c.DT, c.Steps, c.StorePaths = 1, 2, true
+	c.Assets[0] = Asset{InitialPrice: 1}
+	c.Regimes = []Regime{{Mu: []float64{-744}, Sigma: []float64{0}}, {Mu: []float64{750}, Sigma: []float64{0}}}
+	c.Transition = [][]float64{{0, 1}, {0, 1}}
+	got, _ := collect(t, c)
+	s := got[0]
+	first := referencePrice(1, -744)
+	want := referencePrice(first, 750)
+	if s.Prices[0][1] != first || math.Abs(s.FinalPrices[0]/want-1) > 1e-15 {
+		t.Fatalf("prices %v, want [1, %.17g, %.17g]", s.Prices[0], first, want)
+	}
+	if err := validateResult(s, 0, c); err != nil {
+		t.Fatal(err)
+	}
+}
