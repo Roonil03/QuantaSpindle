@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sync"
 )
 
@@ -93,12 +94,12 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 	s := Scenario{ID: id, Seed: ScenarioSeed(c.Seed, id), FinalPrices: make([]float64, n), Returns: make([]float64, n), RealizedVolatility: make([]float64, n), MaxDrawdown: make([]float64, n)}
 	prices := s.FinalPrices
 	peaks := make([]float64, n)
-	means := make([]float64, n)
-	m2 := make([]float64, n)
+	moments := make([]scaledMoments, n)
 	eps := make([]float64, n)
 	for i, a := range c.Assets {
 		prices[i] = a.InitialPrice
 		peaks[i] = a.InitialPrice
+		moments[i].inverse = 1
 	}
 	if c.StorePaths {
 		s.Prices = make([][]float64, n)
@@ -133,14 +134,24 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 				z += l[i][j] * eps[j]
 			}
 			lr := (mu-0.5*sigma*sigma)*c.DT + sigma*sqrtDT*z
-			p := prices[i] * math.Exp(lr)
+			// Preserve ordinary arithmetic, but form integrated variance from
+			// scaled sigma when squaring sigma loses its range.
+			if !finite(lr) || (sigma != 0 && sigma*sigma < 0x1p-1022) {
+				vol := sigma * sqrtDT
+				lr = mu*c.DT - (0.5*vol)*vol + vol*z
+			}
+			factor := math.Exp(lr)
+			p := prices[i] * factor
+			// A subnormal exponential loses precision before multiplication;
+			// its underflow or overflow need not invalidate the final price.
+			if factor < 0x1p-1022 || !finite(factor) || p <= 0 || !finite(p) {
+				p = math.Exp(math.Log(prices[i]) + lr)
+			}
 			if !finite(lr) || !finite(p) || p <= 0 {
 				return Scenario{}, fmt.Errorf("scenario %d step %d asset %d numerical overflow/underflow", id, step, i)
 			}
 			prices[i] = p
-			delta := lr - means[i]
-			means[i] += delta / float64(step+1)
-			m2[i] += delta * (lr - means[i])
+			moments[i].add(lr, step+1)
 			if p > peaks[i] {
 				peaks[i] = p
 			}
@@ -171,15 +182,65 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 	}
 	s.FinalRegime = state
 	for i, a := range c.Assets {
-		s.Returns[i] = prices[i]/a.InitialPrice - 1
+		s.Returns[i] = (prices[i] - a.InitialPrice) / a.InitialPrice
 		if c.Steps > 1 {
-			s.RealizedVolatility[i] = math.Sqrt(math.Max(m2[i], 0) / float64(c.Steps-1) / c.DT)
+			s.RealizedVolatility[i] = moments[i].annualizedStdDev(c.Steps, sqrtDT)
 		}
 		if !finite(s.Returns[i]) || !finite(s.RealizedVolatility[i]) {
 			return Scenario{}, fmt.Errorf("scenario %d asset %d nonfinite summary", id, i)
 		}
 	}
 	return s, nil
+}
+
+// scaledMoments maintains Welford moments in power-of-two normalized units.
+// Squared deviations remain representable even for subnormal log returns.
+// One accumulator per asset keeps memory independent of the number of steps.
+type scaledMoments struct {
+	mean, m2, inverse float64
+	exponent          int
+}
+
+func (m *scaledMoments) add(x float64, count int) {
+	// Cache the power-of-two multiplier to keep rescaling off the hot path.
+	scaled := x * m.inverse
+	if m.exponent < -1023 {
+		// The inverse scale of tiny returns cannot itself fit in float64.
+		scaled = math.Ldexp(x, -m.exponent)
+	}
+	magnitude := math.Abs(scaled)
+	// Normalize the first nonzero tiny value before squaring deviations.
+	if magnitude > 1 || (x != 0 && magnitude < 0x1p-128 && m.mean == 0 && m.m2 == 0) {
+		_, exponent := math.Frexp(math.Abs(x))
+		shift := m.exponent - exponent
+		m.mean = math.Ldexp(m.mean, shift)
+		m.m2 = math.Ldexp(m.m2, 2*shift)
+		m.exponent = exponent
+		m.inverse = math.Ldexp(1, -exponent)
+		scaled = math.Ldexp(x, -exponent)
+	}
+	delta := scaled - m.mean
+	m.mean += delta / float64(count)
+	m.m2 += delta * (scaled - m.mean)
+}
+
+func (m scaledMoments) annualizedStdDev(count int, sqrtDT float64) float64 {
+	fraction, exponent := math.Frexp(sqrtDT)
+	// Divide and rescale together so annualization cannot lose a tiny
+	// standard deviation before division by a tiny time step.
+	return math.Ldexp(math.Sqrt(math.Max(m.m2, 0)/float64(count-1))/fraction, m.exponent-exponent)
+}
+
+func nilBackend(backend Backend) bool {
+	if backend == nil {
+		return true
+	}
+	value := reflect.ValueOf(backend)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	}
+	return false
 }
 
 // RunSummary contains means across scenarios delivered successfully to the sink.
@@ -204,7 +265,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	if err := c.validateDimensions(); err != nil {
 		return summary, err
 	}
-	if backend == nil {
+	if nilBackend(backend) {
 		return summary, fmt.Errorf("backend is nil")
 	}
 	factor, err := correlationFactor(c.Correlation, len(c.Assets))
@@ -219,7 +280,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 		if err != nil {
 			return summary, err
 		}
-		if session == nil {
+		if nilBackend(session) {
 			return summary, fmt.Errorf("backend returned nil run session")
 		}
 		defer func() { runErr = errors.Join(runErr, session.Close()) }()
