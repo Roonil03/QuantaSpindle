@@ -4,7 +4,7 @@ QuantaSpindle is independently written. These entries identify material referenc
 
 ## Dependencies and libraries
 
-- Go standard library, https://pkg.go.dev/std, Go 1.27.1. Provides concurrency, local random generation, math, JSON, process control, and testing. Go is BSD-3-Clause licensed. Used as a toolchain/runtime dependency; its source was not copied into this repository.
+- Go standard library, https://pkg.go.dev/std, Go 1.27.1. Provides concurrency, math, JSON, process control, and testing. CPU random generation uses the project's SplitMix64-v1/Box-Muller implementation in rng.go with standard-library math functions. Go is BSD-3-Clause licensed. Used as a toolchain/runtime dependency; its source was not copied into this repository.
 - NVIDIA cuRAND, https://docs.nvidia.com/cuda/archive/13.2.0/curand/device-api-overview.html, CUDA 13.2. Provides GPU random streams in the optional native runner. NVIDIA's toolkit license applies. Vendor source and libraries are not bundled. Runner calls use the documented API.
 
 ## Toolchains

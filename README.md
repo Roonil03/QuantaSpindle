@@ -112,32 +112,11 @@ The race detector needs cgo and a supported C compiler. It covers Go concurrency
 
 ### v0.1.2 automatic selection
 
-Five trials on an RTX 3060 Laptop GPU (6,144 MiB) and i9-11900H (8 cores/16 logical CPUs), using Go 1.27.1 and CUDA 12.4.131 in a Linux container, compared single-asset FP64 workloads of 252 steps. Times are median milliseconds per request. Cold calls include backend selection, any required GPU startup, and shutdown. Ready calls use an already prepared service. The last column includes preparing that service once, running six requests, and closing it, divided by six. CLI startup and JSON encoding are excluded.
-
-| Scenarios | v0.1.1 cold CUDA | Fastest tested CPU | Cold automatic | Ready automatic | Six requests including setup, per request |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 | 139.96 | 0.78 | 0.83 CPU | 0.76 CPU | 22.93 |
-| 4,096 | 141.90 | 6.54 | 6.21 CPU | 2.67 CUDA | 25.61 |
-| 16,384 | 147.18 | 26.75 | 29.24 CPU | 10.44 CUDA | 34.66 |
-| 524,288 | 407.64 | 810.01 | 417.57 CUDA | 282.18 CUDA | 311.10 |
-
-At 4,096 and 16,384 scenarios, routing to an already prepared GPU gave 2.45× and 2.56× ratios over the fastest measured CPU medians. CPU was faster when setup was spread across only six requests at either size. Fresh forced CUDA took 138.90, 138.80, 139.22 and 395.41 ms in workload order; its trial ranges overlapped v0.1.1 at every size, so no cold CUDA improvement over v0.1.1 is established. These shared-laptop samples do not establish statistical significance or a general crossover. Measurements used [source `2db2704`](https://github.com/Roonil03/QuantaSpindle/commit/2db27040b08b6094766196bf0d93b99e2114093b). [Method and trial ranges](docs/cuda-startup.md) · [All 380 latency samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836)
+Five trials on a shared RTX 3060/i9-11900H laptop found automatic CUDA calls on a prepared service faster than the fastest tested CPU at 4,096 and 16,384 scenarios (median 2.67/10.44 ms versus 6.54/26.75 ms), but CPU won when preparation and shutdown were charged across six requests. Cold automatic calls chose CPU at those sizes and CUDA at 524,288 (417.57 ms versus CPU's 810.01 ms). Cold CUDA ranges overlapped v0.1.1, so no cold improvement is established; these samples do not establish statistical significance or a general crossover. The [startup report](docs/cuda-startup.md) records the single-asset FP64 experiment, timing boundaries and reproduction details for [source `2db2704`](https://github.com/Roonil03/QuantaSpindle/commit/2db27040b08b6094766196bf0d93b99e2114093b), with [380 published latency samples](https://github.com/Roonil03/QuantaSpindle/pull/10#issuecomment-6891525836).
 
 ### v0.1.1 full-run latency
 
-Linux container on the i9-11900H (8 cores/16 logical CPUs) and RTX 3060 Laptop GPU: Go 1.27.1, CUDA 12.4.131, FP64, one asset, initial price 100, drift 0.05, volatility 0.2, seed 1, 252 steps, DT 1/252, summaries without stored paths. One warm-up preceded five measured trials per case; case order reversed on alternate trials. CUDA used one worker and batches up to 16,384. Each CPU row is the fastest median among workers 1/4/8/16 and batches 128/1,024. Times include complete `Run`, CUDA startup, initialization, transfers, and process shutdown; compilation and output JSON encoding are excluded.
-
-| Scenarios | Best CPU workers / batch | CPU median ms | v0.1.0 one-shot CUDA median ms | v0.1.1 CUDA median ms |
-| --- | --- | --- | --- | --- |
-| 256 | 8 / 128 | 1.46 | 145.11 | 159.63 |
-| 4,096 | 16 / 128 | 7.84 | 157.99 | 155.66 |
-| 16,384 | 16 / 1,024 | 32.25 | 208.47 | 220.07 |
-| 262,144 | 16 / 1,024 | 509.16 | 2,942.16 | 381.30 |
-| 524,288 | 16 / 1,024 | 980.90 | 5,997.17 | 505.46 |
-
-At 262,144 and 524,288 scenarios, median latency implies 1.34x and 1.94x speedups over the fastest measured CPU configuration. At 524,288 it implies an 11.86x speedup over the matched released one-shot runner. CPU won the smaller cases. The 262,144-scenario trial ranges overlapped; these shared laptop samples do not establish statistical significance, a general crossover, or dedicated-GPU performance. CPU and CUDA random algorithms differ. The released-runner column uses v0.1.0 native source with the current batch-only harness, not a claim that the optimized code exists in v0.1.0.
-
-The [performance report](docs/cuda-performance.md) records source identities, min/max, throughput, allocations, event timings, reproduction commands, and limits. Raw trials are provided as `measure.jsonl` in the [v0.1.1 release assets](https://github.com/Roonil03/QuantaSpindle/releases/tag/v0.1.1). Go allocations exclude native and device allocations; peak memory was not measured. Historical CPU scaling, earlier single-batch CPU/CUDA measurements, and the PGO experiment remain separately labeled in [validation](docs/validation.md).
+In a separate five-trial, single-asset FP64 experiment on the same shared laptop, complete v0.1.1 CUDA `Run` medians at 262,144/524,288 scenarios were 381.30/505.46 ms versus the fastest tested CPU's 509.16/980.90 ms, including CUDA startup and shutdown; CPU won smaller cases. The 262,144-scenario ranges overlapped, and these samples do not establish statistical significance, a general crossover or dedicated-GPU performance. The [performance report](docs/cuda-performance.md) records source identities, controls, timing boundaries and the historical v0.1.0 comparison; raw trials are in the [v0.1.1 release assets](https://github.com/Roonil03/QuantaSpindle/releases/tag/v0.1.1). Earlier CPU scaling, single-batch and PGO results remain separately scoped in [validation](docs/validation.md).
 
 ## Model contracts
 

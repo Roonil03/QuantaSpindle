@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Preserve sample standard deviations for tiny and subnormal losses in risk summaries.
+- Compute finite risk means and expected shortfall across signed loss extremes, preserving cancellation residuals and subnormal mean rounding.
+- Deduplicate effective mode/configuration pairs in `qsbench` sweeps so each case receives one warm-up and one sample per trial.
+
 ## v0.1.2 - 2026-11-15
 
 ### Automatic selection and prepared CUDA

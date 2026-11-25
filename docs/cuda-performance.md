@@ -41,7 +41,7 @@ Results compare the fastest measured CPU worker configuration for each workload,
 
 ## Source and hardware identity
 
-The final experiment compiled implementation commit `b5f1a31c356ae301ef1f5702284e6a4c9e4bd36c`, Git tree `3ad48595be7693eedcb63fc50431019e2eb2ad78`. Documentation edits were present outside that implementation commit. The released native baseline is `v0.1.0`, peeled commit `3ffad625663d2ec24a54de6aabc41252491c9210`, tree `585d3cb04b13e6a99c705874c36d5b5d146a6f8f`. The current native source SHA-256 is `081803744a34d364e88e5378461df92f5f8c3d98aa721e1e4c454cf92b25d07f`; the exact source and binary hashes are retained in the ignored experiment directory. Earlier development runs are separate and are not pooled into these results.
+The final experiment compiled implementation commit `b5f1a31c356ae301ef1f5702284e6a4c9e4bd36c`, Git tree `3ad48595be7693eedcb63fc50431019e2eb2ad78`. Documentation edits were present outside that implementation commit. The released native baseline is `v0.1.0`, peeled commit `3ffad625663d2ec24a54de6aabc41252491c9210`, tree `585d3cb04b13e6a99c705874c36d5b5d146a6f8f`. The measured implementation's native source SHA-256 is `081803744a34d364e88e5378461df92f5f8c3d98aa721e1e4c454cf92b25d07f`; the exact source and binary hashes are retained in the ignored experiment directory. Earlier development runs are separate and are not pooled into these results.
 
 The CPU is an Intel Core i9-11900H, eight physical cores and 16 logical CPUs. Docker Engine 29.9.3 exposes 16 CPUs and 8,182,960,128 bytes of WSL2 memory with 2 GiB swap; the container cgroup has no additional CPU/memory quota. GOMAXPROCS is 16. The kernel is `6.18.58.1-microsoft-standard-WSL2`, Linux amd64, and Go `CGO_ENABLED=1`. The GPU is an NVIDIA GeForce RTX 3060 Laptop GPU with 6,144 MiB reported device memory. The Linux NVIDIA-SMI shim is 620.73.02 and Windows kernel-mode driver is 621.24. Actual runner metadata reports CUDA runtime API 12040 and driver API 13050. The pre-run GPU snapshot showed 292 MiB in use and 3% utilization, with no processes listed by NVIDIA-SMI; this does not establish exclusive access to the host GPU.
 
@@ -49,7 +49,15 @@ The CPU is an Intel Core i9-11900H, eight physical cores and 16 logical CPUs. Do
 
 The measured local image is `quantaspindle-cuda-benchmark:local`, image ID `sha256:bccbfdea8c8dcfaf6d47a46633f5e0964b10151778960d8ee635a0751660d05d`. Its base is the previously installed local CUDA image identified in [the validation record](validation.md). It supplies CUDA 12.4.131, GCC 11.4.0 and Ubuntu 22.04.4; Go is 1.27.1. The image is a local measurement environment, not a public download.
 
-From PowerShell in the repository:
+Use a full Git checkout so the script can extract the original `v0.1.0` tag. From PowerShell, select the exact measured implementation in a new directory:
+
+```powershell
+git clone https://github.com/Roonil03/QuantaSpindle.git QuantaSpindle-performance
+cd QuantaSpindle-performance
+git switch --detach b5f1a31c356ae301ef1f5702284e6a4c9e4bd36c
+```
+
+On a machine with the original local image and NVIDIA container support, run:
 
 ```powershell
 docker image inspect quantaspindle-cuda-benchmark:local

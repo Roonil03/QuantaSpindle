@@ -1,6 +1,6 @@
 # QuantaSpindle design review
 
-Recorded: 2026-11-15. The foundation review below preserves the original design decisions, including historical private-release assumptions. Current implementation, measured results, and public publication status are recorded in [validation](validation.md). The v0.1.1 amendment below supersedes the original per-batch process design. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
+Recorded: 2026-11-15. The foundation review below preserves the original design decisions, including historical private-release assumptions. Current implementation, measured results, and public publication status are recorded in [validation](validation.md). Adjacent implementation notes and the CUDA lifecycle amendment below distinguish later delivered behavior from the original proposals. See [competitive landscape](competitive-landscape.md) for evidence and naming limits.
 
 ## Scope and independent origin
 
@@ -30,9 +30,13 @@ Here mu is arithmetic proportional drift per year, sigma is annualized volatilit
 
 Generate correlated standard-normal innovations with `z = L * epsilon`, where `C = L * transpose(L)` and epsilon contains independent standard normals. Validate finite square dimension, symmetry, unit diagonal and entries in [-1,1]. Accept positive semidefinite matrices, including singular perfect correlations, using an independently implemented semidefinite Cholesky factorization. Use a documented scale-aware tolerance for roundoff in symmetry and pivots; a zero pivot is valid only when its remaining residuals are also within tolerance. Reject indefinite matrices beyond tolerance, without adding jitter or silently changing the model. Factor once before simulation. The correlation describes instantaneous Brownian innovations, not terminal price Pearson correlations under every model.
 
+Implementation note: [`correlationFactor`](../config.go) currently uses a fixed absolute tolerance of `1e-12` for symmetry, unit diagonal, negative pivots and zero-pivot residuals on correlation matrices constrained to `[-1,1]`.
+
 Model regimes as a finite, caller-specified discrete-time chain. `P[i][j]` means probability of next state j given state i; each row contains finite nonnegative probabilities summing to one within a stated tolerance. Regime parameters contain asset drift and volatility vectors. State timing must be explicit: use the current state for an interval, then sample the next state for the following interval. Preserve an initial state and optional state path. Transition probabilities apply per configured step; changing step size without transforming/calibrating P changes the model. The [markovchain authors' vignette](https://cran.r-project.org/web/packages/markovchain/vignettes/an_introduction_to_markovchain_package.pdf) documents finite-state transition matrices. Foundation scope covers simulation from supplied parameters; it does not claim hidden-state estimation or calibration.
 
 For fixed asset holdings q, terminal portfolio value is `sum(q[i]*S_T[i])`, initial value is `sum(q[i]*S_0[i])`, and loss is initial minus terminal value. Document currency consistency, short holdings and any cash convention. Report sample count, mean, sample standard deviation, selected empirical quantiles, VaR and expected shortfall with a specified confidence and finite-sample convention. A defensible default is nearest-rank VaR and the mean of the worst `ceil((1-alpha)*N)` losses; state that this discrete tail estimator differs from interpolated probability-mass ES when the tail count is fractional. Preserve negative VaR/ES for all-gain samples unless an explicit floor is requested. Reject empty/nonfinite data and invalid confidence. These summaries do not constitute regulatory capital calculations; [the Basel market-risk framework](https://www.bis.org/committees/bcbs/basel-framework/standard/mar) has additional requirements beyond naming VaR or ES.
+
+Implementation note: [`RiskSummary`](../risk.go) exposes count, confidence, mean loss, sample standard deviation, VaR, expected shortfall and tail count. VaR is the empirical quantile at the supplied confidence; the API does not expose arbitrary selected quantiles.
 
 Optional market impact is an execution overlay with caller-supplied coefficients and signed trade quantity/rate. Specify units and buy/sell signs, spread/temporary cost versus persistent price displacement, and treatment of cash/holdings. Zero coefficients must reproduce the baseline. [Almgren and Chriss's paper](https://static1.squarespace.com/static/5df018ec4c9d61288094246c/t/5e39db229a16b072d97fce9b/1580849954431/Optimal%2BExecution%2Bof%2BPortfolio%2BTransaction%2B_%2BAlmgren%26Chriss%2B1999.pdf) distinguishes permanent and temporary impact. A simple overlay inspired by that distinction must not be advertised as the complete optimal-execution model, an exchange simulator or calibrated market behavior.
 
@@ -63,6 +67,8 @@ Historical foundation publication assumptions (superseded by the public publicat
 ## Review outcome
 
 Proceed with the CPU foundation and narrowly scoped real CUDA runner. The principal risks are finite-sample tail uncertainty, user calibration/units, replay contracts, allocation growth, and native backend portability/startup overhead. Each has an explicit contract or validation gate above. Broader CUDA feature parity, calibration, advanced stochastic models, persistent GPU execution and FPGA execution remain future work until implemented and tested.
+
+Implementation note: persistent CUDA execution was subsequently delivered and tested. v0.1.1 reuses one process across batches within a `Run`, and v0.1.2 adds an explicitly prepared service across runs. The [performance experiment](cuda-performance.md) and [startup measurements](cuda-startup.md) record the separate timing boundaries and evidence; the [lifecycle amendment](#v011-cuda-lifecycle-amendment) below describes the per-run session.
 
 ## v0.1.1 CUDA lifecycle amendment
 
