@@ -5,6 +5,7 @@ out=${OUT:-benchmarks/generated/cuda-startup}
 trials=${TRIALS:-5}
 repeats=${REPEATS:-5}
 paths=${PATHS_LIST:-256,4096,16384,524288}
+arch=${CUDA_ARCH:-sm_86}
 mkdir -p "$out" local/linux
 out=$(cd "$out" && pwd)
 baseline="$out/v0.1.1"
@@ -12,6 +13,7 @@ mkdir -p "$baseline"
 git -c safe.directory=/work archive v0.1.1 | tar -x -C "$baseline"
 {
   date -u
+  printf 'CUDA_ARCH=%s\n' "$arch"
   go version
   go env GOOS GOARCH CGO_ENABLED
   nvcc --version
@@ -27,10 +29,10 @@ git -c safe.directory=/work archive v0.1.1 | tar -x -C "$baseline"
   find . -maxdepth 3 -type f \( -name '*.go' -o -name '*.cu' -o -name 'benchmark-startup.sh' \) -not -path './local/*' -not -path './benchmarks/*' -print0 | sort -z | xargs -0 sha256sum
 } > "$out/environment.txt"
 find . -maxdepth 3 -type f \( -name '*.go' -o -name '*.cu' -o -name '*startup*.py' -o -name 'benchmark-startup.sh' \) -not -path './local/*' -not -path './benchmarks/*' -print0 | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
-nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static "$baseline/accelerators/cuda/runner.cu" -o "$out/runner-v0.1.1"
+nvcc -std=c++17 -O3 --fmad=false -arch="$arch" -cudart=static "$baseline/accelerators/cuda/runner.cu" -o "$out/runner-v0.1.1"
 (cd "$baseline" && go build -o "$out/qsbench-v0.1.1" ./cmd/qsbench)
 if [ "${PHASE:-measure}" = baseline-build ]; then exit 0; fi
-nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda
+nvcc -std=c++17 -O3 --fmad=false -arch="$arch" -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda
 go build -o local/linux/qsstartup ./cmd/qsstartup
 go build -o local/linux/qsbench ./cmd/qsbench
 QS_CUDA_RUNNER=/work/local/linux/quantaspindle-cuda go test -count=1 ./cuda ./hybrid -v > "$out/device-tests.txt" 2>&1
