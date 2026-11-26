@@ -72,10 +72,23 @@ func (m SquareRootImpact) Execute(mid, quantity float64) (Execution, error) {
 	e.ParticipationRate = math.Abs(quantity) / m.DailyVolume
 	e.TemporaryImpact = squareRootImpactFraction(m.Temporary, m.Volatility, math.Abs(quantity), m.DailyVolume)
 	e.PermanentImpact = squareRootImpactFraction(m.Permanent, m.Volatility, math.Abs(quantity), m.DailyVolume)
-	e.ExecutionPrice = mid * (1 + sign*(m.HalfSpread+e.TemporaryImpact))
-	e.PostTradeMid = mid * (1 + sign*e.PermanentImpact)
+	adjustment := m.HalfSpread + e.TemporaryImpact
+	adjustmentExponent := 0
+	if math.IsInf(adjustment, 1) {
+		// Two finite fractions can exceed float64 even when their scaled
+		// price and cost fit. Halving first retains the missing exponent.
+		adjustment = m.HalfSpread/2 + e.TemporaryImpact/2
+		adjustmentExponent = 1
+	}
+	e.ExecutionPrice = math.FMA(mid, sign*adjustment, mid)
+	if adjustmentExponent != 0 {
+		e.ExecutionPrice = math.FMA(mid, sign*adjustment, e.ExecutionPrice)
+	}
+	// Fuse the displacement with the starting price so small impacts do not
+	// disappear when 1+impact rounds to one before multiplying by mid.
+	e.PostTradeMid = math.FMA(mid, sign*e.PermanentImpact, mid)
 	e.CashChange = -quantity * e.ExecutionPrice
-	e.Cost = impactCost(math.Abs(quantity), mid, m.HalfSpread+e.TemporaryImpact)
+	e.Cost = impactCost(math.Abs(quantity), mid, adjustment, adjustmentExponent)
 	if !finite(e.ParticipationRate) || !finite(e.TemporaryImpact) || !finite(e.PermanentImpact) || !finite(e.ExecutionPrice) || e.ExecutionPrice <= 0 || !finite(e.PostTradeMid) || e.PostTradeMid <= 0 || !finite(e.CashChange) || !finite(e.Cost) {
 		return Execution{}, fmt.Errorf("impact produces invalid price or cash value")
 	}
@@ -103,12 +116,12 @@ func squareRootImpactFraction(coefficient, volatility, quantity, volume float64)
 
 // impactCost multiplies finite nonnegative factors without prematurely rounding
 // an intermediate notional or price adjustment out of float64's range.
-func impactCost(quantity, mid, adjustment float64) float64 {
+func impactCost(quantity, mid, adjustment float64, adjustmentExponent int) float64 {
 	if adjustment == 0 {
 		return 0
 	}
 	q, qe := math.Frexp(quantity)
 	m, me := math.Frexp(mid)
 	a, ae := math.Frexp(adjustment)
-	return math.Ldexp(q*m*a, qe+me+ae)
+	return math.Ldexp(q*m*a, qe+me+ae+adjustmentExponent)
 }
