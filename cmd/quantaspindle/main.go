@@ -25,7 +25,7 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := execute(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := execute(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, "quantaspindle:", err)
 		os.Exit(1)
 	}
@@ -46,6 +46,8 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	batch := fs.Int("batch", cfg.BatchSize, "scenarios per batch")
 	storePaths := fs.Bool("store-paths", false, "include complete paths; increases bounded working memory")
 	summaryOnly := fs.Bool("summary-only", false, "omit individual scenario records")
+	progressEvery := fs.Int("progress-every", 0, "report delivered scenario counts to stderr every N scenarios; zero disables")
+	validateOnly := fs.Bool("validate-only", false, "emit resolved config and validation status without selecting a backend or running")
 	timeout := fs.Duration("timeout", 0, "whole run deadline; zero disables")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -127,6 +129,9 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	if *timeout < 0 {
 		return errors.New("timeout must be nonnegative")
 	}
+	if *progressEvery < 0 {
+		return errors.New("progress-every must be nonnegative")
+	}
 	if *timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
@@ -134,6 +139,18 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	switch *backendName {
+	case "auto", "cpu", "cuda":
+	default:
+		return fmt.Errorf("unknown backend %q; use auto, cpu or cuda", *backendName)
+	}
+	if *validateOnly {
+		return json.NewEncoder(output).Encode(struct {
+			Type   string    `json:"type"`
+			Valid  bool      `json:"valid"`
+			Config qs.Config `json:"config"`
+		}{"validation", true, cfg})
 	}
 	var backend qs.Backend
 	var gpu *cuda.Backend
@@ -161,8 +178,6 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	case "cuda":
 		gpu = &cuda.Backend{Runner: *runner}
 		backend = gpu
-	default:
-		return fmt.Errorf("unknown backend %q; use auto, cpu or cuda", *backendName)
 	}
 	writer := bufio.NewWriter(output)
 	encoder := json.NewEncoder(writer)
@@ -175,15 +190,29 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	if err := encoder.Encode(metadata); err != nil {
 		return err
 	}
-	summary, runErr := qs.Run(ctx, executionConfig, backend, func(s qs.Scenario) error {
-		if *summaryOnly {
-			return nil
+	var delivered, lastReport uint64
+	reportProgress := func(count uint64) {
+		if *progressEvery > 0 && count != lastReport {
+			fmt.Fprintf(diagnostic, "quantaspindle: progress delivered=%d\n", count)
+			lastReport = count
 		}
-		return encoder.Encode(struct {
-			Type     string      `json:"type"`
-			Scenario qs.Scenario `json:"scenario"`
-		}{"scenario", s})
+	}
+	summary, runErr := qs.Run(ctx, executionConfig, backend, func(s qs.Scenario) error {
+		if !*summaryOnly {
+			if err := encoder.Encode(struct {
+				Type     string      `json:"type"`
+				Scenario qs.Scenario `json:"scenario"`
+			}{"scenario", s}); err != nil {
+				return err
+			}
+		}
+		delivered++
+		if *progressEvery > 0 && delivered%uint64(*progressEvery) == 0 {
+			reportProgress(delivered)
+		}
+		return nil
 	})
+	reportProgress(summary.Scenarios)
 	if selected != nil {
 		runErr = errors.Join(runErr, selected.Close())
 	}
