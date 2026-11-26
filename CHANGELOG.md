@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve cancellation residuals in run summary means, finite means when scenario totals overflow, and successfully delivered partial-run summaries.
+- Retain representable CPU price increments from tiny log returns using compensated exponential updates.
 - Preserve sample standard deviations for tiny and subnormal losses in risk summaries.
 - Compute finite risk means and expected shortfall across signed loss extremes, preserving cancellation residuals and subnormal mean rounding.
 - Deduplicate effective mode/configuration pairs in `qsbench` sweeps so each case receives one warm-up and one sample per trial.

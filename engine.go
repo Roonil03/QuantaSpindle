@@ -145,9 +145,10 @@ func simulate(ctx context.Context, c Config, l [][]float64, id uint64) (Scenario
 			}
 			factor := math.Exp(lr)
 			p := prices[i] * factor
-			// Keep ordinary arithmetic, but avoid an exponential that loses
-			// range and extra rounding near the final price's range limits.
-			if factor < 0x1p-1022 || !finite(factor) || p <= 0x1p-1022 || p >= 0x1p1023 {
+			// Tiny log returns need Expm1 and FMA to retain the increment
+			// before rounding the price. Also recover exponential range and
+			// avoid extra rounding near the final price's range limits.
+			if math.Abs(lr) < 0x1p-26 || factor < 0x1p-1022 || !finite(factor) || p <= 0x1p-1022 || p >= 0x1p1023 {
 				p = priceAfterLogReturn(prices[i], lr)
 			}
 			if !finite(p) || p <= 0 {
@@ -296,6 +297,41 @@ type RunSummary struct {
 	Backend                string
 }
 
+// runMean accumulates a compensated sum in power-of-two scaled units.
+// Scaling by the configured path count bounds every partial sum, even when
+// unscaled observations would overflow. Residuals retain bits lost by scaling
+// subnormal values. Each accumulator uses constant memory throughout a run.
+type runMean struct {
+	sum, correction, residual, residualCorrection float64
+	maxMagnitude                                  float64
+	exponent                                      int
+}
+
+func (m *runMean) add(value float64) {
+	scaled := math.Ldexp(value, -m.exponent)
+	m.sum, m.correction = riskAdd(m.sum, m.correction, scaled)
+	if math.Abs(scaled) < 0x1p-1022 {
+		remainder := value - math.Ldexp(scaled, m.exponent)
+		m.residual, m.residualCorrection = riskAdd(m.residual, m.residualCorrection, remainder)
+	}
+	m.maxMagnitude = math.Max(m.maxMagnitude, math.Abs(value))
+}
+
+func (m runMean) mean(count uint64) float64 {
+	total := m.sum + m.correction
+	n := float64(count)
+	var mean float64
+	if restored := math.Ldexp(total, m.exponent); finite(restored) {
+		restored, correction := riskAdd(restored, m.residualCorrection, m.residual)
+		mean = (restored + correction) / n
+	} else {
+		fraction, exponent := math.Frexp(total)
+		mean = math.Ldexp(fraction/n, exponent+m.exponent)
+	}
+	// A finite sample's mean cannot exceed its largest magnitude value.
+	return math.Max(-m.maxMagnitude, math.Min(m.maxMagnitude, mean))
+}
+
 // Run generates bounded waves of concurrent batches and delivers scenarios to
 // sink serially in ascending ID order. A nil sink discards individual results.
 // On error it returns only the successfully delivered prefix summary. The input
@@ -337,6 +373,23 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	summary.MeanRealizedVolatility = make([]float64, len(c.Assets))
 	summary.MeanMaxDrawdown = make([]float64, len(c.Assets))
 	metrics := make([]float64, 3*len(c.Assets))
+	means := make([]runMean, len(metrics))
+	_, exponent := math.Frexp(float64(c.Paths))
+	for i := range means {
+		// One extra bit leaves headroom for accumulation rounding.
+		means[i].exponent = exponent + 1
+	}
+	defer func() {
+		if summary.Scenarios == 0 {
+			return
+		}
+		n := len(c.Assets)
+		for i := range summary.MeanReturns {
+			summary.MeanReturns[i] = means[i].mean(summary.Scenarios)
+			summary.MeanRealizedVolatility[i] = means[n+i].mean(summary.Scenarios)
+			summary.MeanMaxDrawdown[i] = means[2*n+i].mean(summary.Scenarios)
+		}
+	}()
 	for first := 0; first < c.Paths; {
 		if err := ctx.Err(); err != nil {
 			return summary, err
@@ -398,11 +451,8 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 					}
 				}
 				summary.Scenarios++
-				k := float64(summary.Scenarios)
-				for i := range summary.MeanReturns {
-					summary.MeanReturns[i] += (metrics[i] - summary.MeanReturns[i]) / k
-					summary.MeanRealizedVolatility[i] += (metrics[n+i] - summary.MeanRealizedVolatility[i]) / k
-					summary.MeanMaxDrawdown[i] += (metrics[2*n+i] - summary.MeanMaxDrawdown[i]) / k
+				for i, value := range metrics {
+					means[i].add(value)
 				}
 			}
 		}
