@@ -298,7 +298,7 @@ type RunSummary struct {
 }
 
 // runMean accumulates a compensated sum in power-of-two scaled units.
-// Scaling by the configured path count bounds every partial sum, even when
+// Scaling by the selected scenario count bounds every partial sum, even when
 // unscaled observations would overflow. Residuals retain bits lost by scaling
 // subnormal values. Each accumulator uses constant memory throughout a run.
 type runMean struct {
@@ -337,10 +337,23 @@ func (m runMean) mean(count uint64) float64 {
 // On error it returns only the successfully delivered prefix summary. The input
 // Config and its slices must remain immutable until Run returns.
 func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) error) (summary RunSummary, runErr error) {
+	return runRange(ctx, c, backend, 0, uint64(c.Paths), false, sink)
+}
+
+// RunRange delivers count scenarios starting at startID, retaining their IDs
+// and seeds in the total Config.Paths ID space. Its summary covers only the
+// successfully delivered range prefix. Working storage is checked against the
+// selected count. Backends receive the original Config and absolute batch IDs;
+// custom backends may impose additional validation or resource requirements.
+func RunRange(ctx context.Context, c Config, backend Backend, startID, count uint64, sink func(Scenario) error) (RunSummary, error) {
+	return runRange(ctx, c, backend, startID, count, true, sink)
+}
+
+func runRange(ctx context.Context, c Config, backend Backend, startID, count uint64, selected bool, sink func(Scenario) error) (summary RunSummary, runErr error) {
 	if ctx == nil {
 		return summary, fmt.Errorf("context is nil")
 	}
-	if err := c.validateDimensions(); err != nil {
+	if err := c.validateDimensionsForRange(startID, count, selected); err != nil {
 		return summary, err
 	}
 	if nilBackend(backend) {
@@ -374,7 +387,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 	summary.MeanMaxDrawdown = make([]float64, len(c.Assets))
 	metrics := make([]float64, 3*len(c.Assets))
 	means := make([]runMean, len(metrics))
-	_, exponent := math.Frexp(float64(c.Paths))
+	_, exponent := math.Frexp(float64(count))
 	for i := range means {
 		// One extra bit leaves headroom for accumulation rounding.
 		means[i].exponent = exponent + 1
@@ -390,30 +403,30 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 			summary.MeanMaxDrawdown[i] = means[2*n+i].mean(summary.Scenarios)
 		}
 	}()
-	for first := 0; first < c.Paths; {
+	for offset := 0; offset < int(count); {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		nb := min(c.Workers, (c.Paths-first+c.BatchSize-1)/c.BatchSize)
+		nb := min(c.Workers, (int(count)-offset+c.BatchSize-1)/c.BatchSize)
 		results := make([][]Scenario, nb)
 		errs := make([]error, nb)
 		var wg sync.WaitGroup
 		waveCtx, cancel := context.WithCancel(ctx)
 		for b := 0; b < nb; b++ {
-			start := first + b*c.BatchSize
-			count := min(c.BatchSize, c.Paths-start)
+			start := startID + uint64(offset+b*c.BatchSize)
+			batchCount := min(c.BatchSize, int(count)-offset-b*c.BatchSize)
 			wg.Add(1)
-			go func(b, start, count int) {
+			go func(b int, start uint64, count int) {
 				defer wg.Done()
 				if cpuValue || cpuPointer {
-					results[b], errs[b] = cpuBatch(waveCtx, c, factor, uint64(start), count)
+					results[b], errs[b] = cpuBatch(waveCtx, c, factor, start, count)
 				} else {
-					results[b], errs[b] = backend.Batch(waveCtx, c, uint64(start), count)
+					results[b], errs[b] = backend.Batch(waveCtx, c, start, count)
 				}
 				if errs[b] != nil {
 					cancel()
 				}
-			}(b, start, count)
+			}(b, start, batchCount)
 		}
 		wg.Wait()
 		cancel()
@@ -429,7 +442,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 			}
 		}
 		for b, batch := range results {
-			expected := min(c.BatchSize, c.Paths-(first+b*c.BatchSize))
+			expected := min(c.BatchSize, int(count)-offset-b*c.BatchSize)
 			if len(batch) != expected {
 				return summary, fmt.Errorf("backend returned %d scenarios, expected %d", len(batch), expected)
 			}
@@ -437,7 +450,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 				if err := ctx.Err(); err != nil {
 					return summary, err
 				}
-				if err := validateResult(s, uint64(first+b*c.BatchSize+j), c); err != nil {
+				if err := validateResult(s, startID+uint64(offset+b*c.BatchSize+j), c); err != nil {
 					return summary, err
 				}
 				// Preserve metrics before transferring slice ownership to the sink.
@@ -456,7 +469,7 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 				}
 			}
 		}
-		first += nb * c.BatchSize
+		offset += nb * c.BatchSize
 	}
 	return summary, nil
 }
