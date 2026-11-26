@@ -8,8 +8,10 @@ mkdir -p "$out" local/linux
 phase=${PHASE:-measure}
 trials=${TRIALS:-5}
 paths=${PATHS_LIST:-256,4096,16384,262144,524288}
+arch=${CUDA_ARCH:-sm_86}
 {
   date -u
+  printf 'CUDA_ARCH=%s\n' "$arch"
   go version
   go env GOOS GOARCH CGO_ENABLED
   nvcc --version
@@ -27,11 +29,11 @@ paths=${PATHS_LIST:-256,4096,16384,262144,524288}
 } > "$out/environment-$phase.txt"
 # Build the actual release kernel, not a reimplementation of the baseline.
 git -c safe.directory=/work show v0.1.0:accelerators/cuda/runner.cu > "$out/runner-v0.1.0.cu"
-nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static "$out/runner-v0.1.0.cu" -o local/linux/quantaspindle-cuda-v0.1.0
+nvcc -std=c++17 -O3 --fmad=false -arch="$arch" -cudart=static "$out/runner-v0.1.0.cu" -o local/linux/quantaspindle-cuda-v0.1.0
 go build -o local/linux/qsbench ./cmd/qsbench
 backends=cpu,cuda-batch
 if [ "$phase" != baseline ]; then
-  nvcc -std=c++17 -O3 --fmad=false -arch=sm_86 -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda
+  nvcc -std=c++17 -O3 --fmad=false -arch="$arch" -cudart=static accelerators/cuda/runner.cu -o local/linux/quantaspindle-cuda
   QS_CUDA_RUNNER=/work/local/linux/quantaspindle-cuda go test -count=1 ./cuda -v > "$out/device-tests.txt" 2>&1
   backends=cpu,cuda-batch,cuda
 fi
