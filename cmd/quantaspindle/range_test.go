@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -239,6 +242,58 @@ func TestCLIRangeResourceValidationUsesCount(t *testing.T) {
 			} else {
 				records := decodeCLIRecords(t, output.Bytes())
 				checkRangeRecord(t, records[0], 500000, 1)
+			}
+		}
+	}
+}
+
+func TestCLIRangeProcessIntegration(t *testing.T) {
+	binary := buildCLI(t)
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"Paths":12,"Steps":2,"Seed":21,"Workers":1,"BatchSize":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"-backend", "cpu", "-config", path, "-paths", "8", "-seed", "42", "-store-paths"}
+	run := func(args []string) ([]map[string]json.RawMessage, string) {
+		t.Helper()
+		var output, diagnostic bytes.Buffer
+		cmd := exec.Command(binary, args...)
+		cmd.Stdout, cmd.Stderr = &output, &diagnostic
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("CLI %v: %v\n%s", args, err, &diagnostic)
+		}
+		return decodeCLIRecords(t, output.Bytes()), diagnostic.String()
+	}
+	full, _ := run(base)
+	var joined []qs.Scenario
+	for _, bounds := range [][2]int{{0, 3}, {3, 5}} {
+		args := append(append([]string(nil), base...), "-start-id", fmt.Sprint(bounds[0]), "-count", fmt.Sprint(bounds[1]))
+		records, _ := run(args)
+		joined = append(joined, scenariosFromRecords(t, records)...)
+	}
+	if !reflect.DeepEqual(joined, scenariosFromRecords(t, full)) {
+		t.Fatal("built CLI split ranges changed IDs, seeds, or paths")
+	}
+	args := append(append([]string(nil), base...), "-start-id", "3", "-progress-every", "2", "-summary-only")
+	records, diagnostic := run(args)
+	if len(records) != 2 || diagnostic != "quantaspindle: progress delivered=2\nquantaspindle: progress delivered=4\nquantaspindle: progress delivered=5\n" {
+		t.Fatalf("built CLI progress: records=%d stderr=%q", len(records), diagnostic)
+	}
+	records, diagnostic = run(append(args, "-validate-only"))
+	if len(records) != 1 || string(records[0]["type"]) != `"validation"` || diagnostic != "" {
+		t.Fatalf("built CLI validation: records=%v stderr=%q", records, diagnostic)
+	}
+	checkRangeRecord(t, records[0], 3, 5)
+	for _, invalid := range [][]string{{"-count", "0"}, {"-start-id", "8", "-count", "1"}, {"-start-id", "1", "-count", "18446744073709551615"}, {"-backend", "auto", "-start-id", "0"}, {"-backend", "cuda", "-count", "3"}} {
+		for _, validateOnly := range []bool{false, true} {
+			modeArgs := append(append([]string(nil), base...), invalid...)
+			if validateOnly {
+				modeArgs = append(modeArgs, "-validate-only")
+			}
+			output, err := exec.Command(binary, modeArgs...).CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 || bytes.Contains(output, []byte(`"type":"summary"`)) {
+				t.Fatalf("built CLI accepted invalid range %v: err=%v output=%s", modeArgs, err, output)
 			}
 		}
 	}

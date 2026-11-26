@@ -3,6 +3,7 @@ package quantaspindle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -131,5 +132,73 @@ func TestRangeWaveStorageCountsPartialFinalBatch(t *testing.T) {
 	}
 	if err := c.Validate(); err == nil {
 		t.Fatal("ordinary full-run storage validation changed")
+	}
+}
+
+func TestRunRangePreservesCompensatedMeans(t *testing.T) {
+	metricScenarios := func(values []float64) []Scenario {
+		out := make([]Scenario, len(values))
+		for i, value := range values {
+			out[i] = Scenario{FinalPrices: []float64{1}, Returns: []float64{value}, RealizedVolatility: []float64{math.Abs(value)}, MaxDrawdown: []float64{math.Min(math.Abs(value), 1)}}
+		}
+		return out
+	}
+	for name, values := range map[string][]Scenario{
+		"cancellation": cancellationScenarios()[:3],
+		"overflow":     metricScenarios([]float64{math.MaxFloat64, math.MaxFloat64, 0}),
+		"subnormal":    metricScenarios([]float64{math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64, 2 * math.SmallestNonzeroFloat64}),
+	} {
+		for _, stop := range []string{"success", "sink", "cancellation"} {
+			t.Run(name+"/"+stop, func(t *testing.T) {
+				c := tinyConfig()
+				c.Paths, c.Workers, c.BatchSize = 1_000_000_000, 1, 1
+				c.Assets = make([]Asset, len(values[0].Returns))
+				for i := range c.Assets {
+					c.Assets[i].InitialPrice = 1
+				}
+				start := uint64(c.Paths - len(values))
+				fixture := precisionScenarios(values)
+				backend := precisionBackend(func(ctx context.Context, cfg Config, first uint64, count int) ([]Scenario, error) {
+					if cfg.Paths != c.Paths {
+						return nil, fmt.Errorf("backend lost total ID space: %d", cfg.Paths)
+					}
+					out, err := fixture.Batch(ctx, cfg, first-start, count)
+					for i := range out {
+						out[i].ID = first + uint64(i)
+						out[i].Seed = ScenarioSeed(cfg.Seed, out[i].ID)
+					}
+					return out, err
+				})
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				sentinel := errors.New("stop range sink")
+				delivered := 0
+				summary, err := RunRange(ctx, c, backend, start, uint64(len(values)), func(s Scenario) error {
+					if stop == "sink" && delivered == 2 {
+						return sentinel
+					}
+					delivered++
+					if stop == "cancellation" && delivered == 2 {
+						cancel()
+					}
+					s.Returns[0] = math.NaN()
+					return nil
+				})
+				wantCount := len(values)
+				if stop != "success" {
+					wantCount = 2
+					wantErr := sentinel
+					if stop == "cancellation" {
+						wantErr = context.Canceled
+					}
+					if !errors.Is(err, wantErr) {
+						t.Fatalf("range lost error: %v", err)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				checkPrecisionSummary(t, summary, values[:wantCount])
+			})
+		}
 	}
 }
