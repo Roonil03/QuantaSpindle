@@ -85,9 +85,32 @@ func (c Config) Validate() error {
 	return err
 }
 
+// ValidateRange validates a nonempty scenario ID range within [0, Paths).
+// Working storage is bounded using count, while Paths retains the total ID
+// space. It performs the same model checks as Validate without starting workers.
+func (c Config) ValidateRange(startID, count uint64) error {
+	if err := c.validateRangeDimensions(startID, count); err != nil {
+		return err
+	}
+	_, err := correlationFactor(c.Correlation, len(c.Assets))
+	return err
+}
+
 func (c Config) validateDimensions() error {
+	return c.validateDimensionsForRange(0, uint64(c.Paths), false)
+}
+
+func (c Config) validateRangeDimensions(startID, count uint64) error {
+	return c.validateDimensionsForRange(startID, count, true)
+}
+
+func (c Config) validateDimensionsForRange(startID, count uint64, selected bool) error {
 	if c.Paths < 1 || c.Paths > 1_000_000_000 {
 		return fmt.Errorf("paths must be in [1,1000000000]")
+	}
+	// Subtract before comparing to avoid overflowing startID + count.
+	if startID >= uint64(c.Paths) || count == 0 || count > uint64(c.Paths)-startID {
+		return fmt.Errorf("scenario range requires start-id < paths, count > 0, and count <= paths - start-id")
 	}
 	if c.Steps < 1 || c.Steps > 1_000_000 {
 		return fmt.Errorf("steps must be in [1,1000000]")
@@ -143,8 +166,13 @@ func (c Config) validateDimensions() error {
 			}
 		}
 	}
-	w := min(c.Workers, (c.Paths+c.BatchSize-1)/c.BatchSize)
-	if uint64(w)*uint64(min(c.BatchSize, c.Paths))*scenarioBytes(c)+factorBytes(n) > maxWaveBytes {
+	w := min(c.Workers, (int(count)+c.BatchSize-1)/c.BatchSize)
+	waveCount := uint64(w) * uint64(min(c.BatchSize, int(count)))
+	if selected {
+		// A partial final batch stores only the remaining selected scenarios.
+		waveCount = min(waveCount, count)
+	}
+	if waveCount*scenarioBytes(c)+factorBytes(n) > maxWaveBytes {
 		return fmt.Errorf("configured wave exceeds 512 MiB storage limit; reduce workers/batch size or disable paths")
 	}
 	return nil

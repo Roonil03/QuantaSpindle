@@ -22,6 +22,11 @@ import (
 	"github.com/Roonil03/QuantaSpindle/hybrid"
 )
 
+type scenarioRange struct {
+	StartID uint64 `json:"start_id"`
+	Count   uint64 `json:"count"`
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -39,6 +44,8 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	backendName := fs.String("backend", "auto", "auto, cpu or cuda; explicit modes pin the backend")
 	runner := fs.String("cuda-runner", "", "path to the trusted native CUDA executable")
 	paths := fs.Int("paths", cfg.Paths, "scenario count, one path per asset per scenario")
+	startID := fs.Uint64("start-id", 0, "first scenario ID in a CPU range; requires -backend cpu")
+	rangeCount := fs.Uint64("count", 0, "scenarios in a CPU range; defaults to paths minus start-id")
 	steps := fs.Int("steps", cfg.Steps, "number of time intervals")
 	dt := fs.Float64("dt", cfg.DT, "interval length in years")
 	seed := fs.Uint64("seed", cfg.Seed, "run seed")
@@ -55,7 +62,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
 	}
-	explicitWorkers, explicitBatch := false, false
+	explicitWorkers, explicitBatch, explicitRange, explicitCount := false, false, false, false
 	if *configPath != "" {
 		f, err := os.Open(*configPath)
 		if err != nil {
@@ -108,6 +115,11 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "start-id", "count":
+			explicitRange = true
+			if f.Name == "count" {
+				explicitCount = true
+			}
 		case "paths":
 			cfg.Paths = *paths
 		case "steps":
@@ -137,8 +149,26 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
 		defer cancel()
 	}
-	if err := cfg.Validate(); err != nil {
-		return err
+	selectedStart, selectedCount := uint64(0), uint64(cfg.Paths)
+	var requestedRange *scenarioRange
+	if explicitRange {
+		selectedStart, selectedCount = *startID, *rangeCount
+		if !explicitCount && cfg.Paths > 0 && selectedStart < uint64(cfg.Paths) {
+			selectedCount = uint64(cfg.Paths) - selectedStart
+		}
+		requestedRange = &scenarioRange{StartID: selectedStart, Count: selectedCount}
+	}
+	var validationErr error
+	if explicitRange {
+		validationErr = cfg.ValidateRange(selectedStart, selectedCount)
+	} else {
+		validationErr = cfg.Validate()
+	}
+	if validationErr != nil {
+		return validationErr
+	}
+	if explicitRange && *backendName != "cpu" {
+		return errors.New("scenario ranges require -backend cpu; auto and cuda are unsupported")
 	}
 	switch *backendName {
 	case "auto", "cpu", "cuda":
@@ -147,10 +177,11 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	}
 	if *validateOnly {
 		return json.NewEncoder(output).Encode(struct {
-			Type   string    `json:"type"`
-			Valid  bool      `json:"valid"`
-			Config qs.Config `json:"config"`
-		}{"validation", true, cfg})
+			Type   string         `json:"type"`
+			Valid  bool           `json:"valid"`
+			Config qs.Config      `json:"config"`
+			Range  *scenarioRange `json:"range,omitempty"`
+		}{"validation", true, cfg, requestedRange})
 	}
 	var backend qs.Backend
 	var gpu *cuda.Backend
@@ -183,6 +214,9 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	encoder := json.NewEncoder(writer)
 	metadata := map[string]any{"type": "metadata", "config": cfg, "backend": backend.Name(), "precision": "float64", "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "gomaxprocs": runtime.GOMAXPROCS(0), "version": buildVersion(), "started_utc": started.UTC().Format(time.RFC3339Nano)}
 	metadata["requested_backend"] = *backendName
+	if requestedRange != nil {
+		metadata["range"] = requestedRange
+	}
 	if selected != nil {
 		metadata["selection"] = selected.Decision
 		metadata["execution_config"] = executionConfig
@@ -197,7 +231,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 			lastReport = count
 		}
 	}
-	summary, runErr := qs.Run(ctx, executionConfig, backend, func(s qs.Scenario) error {
+	sink := func(s qs.Scenario) error {
 		if !*summaryOnly {
 			if err := encoder.Encode(struct {
 				Type     string      `json:"type"`
@@ -211,7 +245,14 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 			reportProgress(delivered)
 		}
 		return nil
-	})
+	}
+	var summary qs.RunSummary
+	var runErr error
+	if explicitRange {
+		summary, runErr = qs.RunRange(ctx, executionConfig, backend, selectedStart, selectedCount, sink)
+	} else {
+		summary, runErr = qs.Run(ctx, executionConfig, backend, sink)
+	}
 	reportProgress(summary.Scenarios)
 	if selected != nil {
 		runErr = errors.Join(runErr, selected.Close())
@@ -223,6 +264,10 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		return runErr
 	}
 	result := map[string]any{"type": "summary", "summary": summary, "elapsed_ns": elapsed.Nanoseconds()}
+	if requestedRange != nil {
+		result["range"] = requestedRange
+		result["scope"] = "range"
+	}
 	// Very short runs can be below a platform clock's resolution.
 	if elapsed > 0 {
 		result["scenarios_per_second"] = float64(summary.Scenarios) / elapsed.Seconds()

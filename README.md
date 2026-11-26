@@ -60,6 +60,18 @@ go run ./cmd/quantaspindle -validate-only -config config.json -backend cpu -path
 
 This applies the same strict JSON parsing, explicit flag overrides, and configuration validation as a normal run, then emits exactly one record: `{"type":"validation","valid":true,"config":{...}}`. It checks flag names and values, rejects positional arguments, requires `-backend` to be `auto`, `cpu`, or `cuda`, and requires nonnegative `-timeout` and `-progress-every`. Configuration checks include dimensions, resource limits, asset parameters, transition probabilities, and correlation. Invalid input returns the same relevant error and nonzero status as a normal run. No backend is selected, CUDA runner is started, scenarios are generated, or run summary is emitted. The check does not establish device or runner availability or whether the chosen backend supports the model; `-cuda-runner` is accepted as a path without inspecting or executing it.
 
+For a manual restart after retaining IDs 0 through 399999 from a CPU run, generate just the remaining IDs with the same configuration, seed, backend, and toolchain:
+
+```sh
+go run ./cmd/quantaspindle -backend cpu -paths 1000000 -start-id 400000 -count 600000 -seed 42
+```
+
+`-paths` remains the total scenario ID space; this command selects IDs `[400000, 1000000)` without renumbering IDs or changing their seeds. Both range flags are optional: omitting `-start-id` starts at zero, and omitting `-count` selects all remaining IDs. An explicit range requires `-backend cpu`, including an explicitly requested full range. Auto and CUDA selections are rejected. The start must be below `paths`, the count must be positive, and the count cannot exceed `paths - start-id`. Negative or overflowing values are rejected. This supports an external checkpoint workflow; callers must retain the delivered prefix and choose the restart ID themselves.
+
+Explicit ranges add `"range":{"start_id":400000,"count":600000}` to metadata and the final summary record. The summary also includes `"scope":"range"`; its scenario count and means cover only the selected range. Without either range flag, the output schema and full-run behavior stay unchanged. Range storage validation uses the selected count and accounts for a partial final batch, while retaining the configured total ID space. `-validate-only` performs the same range checks and includes the requested range in its sole validation record. Progress and error `completed` counts measure scenarios delivered in this invocation, starting from zero, rather than absolute IDs.
+
+To combine per-range aggregate means, weight each mean by its range's delivered scenario count, then divide by the total delivered count. Other aggregate statistics may require additional information; simply averaging aggregate values is not a general merge procedure. The Go API exposes `Config.ValidateRange(startID, count)` and `RunRange(ctx, cfg, backend, startID, count, sink)` for the same absolute-ID selection and range-scoped summary.
+
 ```go
 package main
 
