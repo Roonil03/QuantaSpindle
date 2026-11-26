@@ -66,6 +66,63 @@ func TestSquareRootImpactCostBeforePriceRounding(t *testing.T) {
 	}
 }
 
+func TestSquareRootImpactOverflowingAdjustment(t *testing.T) {
+	m := SquareRootImpact{Volatility: 1, DailyVolume: 1, Temporary: 1e308, HalfSpread: 1e308}
+	for _, mid := range []float64{1e-308, math.SmallestNonzeroFloat64} {
+		got, err := m.Execute(mid, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 2 * (mid * 1e308)
+		impactRelativeClose(t, "execution price", got.ExecutionPrice, want)
+		impactRelativeClose(t, "cash change", got.CashChange, -want)
+		impactRelativeClose(t, "cost", got.Cost, want)
+		if got.TemporaryImpact != 1e308 || got.PostTradeMid != mid {
+			t.Fatalf("unexpected impact or midpoint: %+v", got)
+		}
+	}
+	// The scale-aware sum must still reject a nonpositive sale price or a
+	// required output that really exceeds float64.
+	for _, tc := range []struct{ mid, quantity float64 }{
+		{1e-308, -1}, {1, 1}, {1e-308, 1e308},
+	} {
+		if _, err := m.Execute(tc.mid, tc.quantity); err == nil {
+			t.Fatalf("accepted unrepresentable execution for %+v", tc)
+		}
+	}
+}
+
+func TestSquareRootImpactMidpointDisplacementRounding(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		mid, quantity, impact float64
+		want                  float64
+	}{
+		{"reported buy", math.Nextafter(2, 0), 1, 1e-16, 2},
+		{"sell", 2, -1, 1e-16, math.Nextafter(2, 0)},
+		{"rounded unchanged buy", 2, 1, 1e-17, 2},
+		{"rounded unchanged sell", 2, -1, 1e-17, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := SquareRootImpact{Volatility: 1, DailyVolume: 1, Permanent: tc.impact}
+			got, err := m.Execute(tc.mid, tc.quantity)
+			if err != nil || got.PostTradeMid != tc.want || got.PermanentImpact != tc.impact {
+				t.Fatalf("execution = %+v, %v; want midpoint %.17g", got, err, tc.want)
+			}
+		})
+	}
+	for _, impact := range []float64{1, 2} {
+		m := SquareRootImpact{Volatility: 1, DailyVolume: 1, Permanent: impact}
+		if _, err := m.Execute(2, -1); err == nil {
+			t.Fatalf("accepted nonpositive midpoint for impact %g", impact)
+		}
+	}
+	m := SquareRootImpact{Volatility: 1, DailyVolume: 1, Permanent: 1}
+	if _, err := m.Execute(math.MaxFloat64, 1); err == nil {
+		t.Fatal("accepted overflowing midpoint")
+	}
+}
+
 func TestSquareRootImpactRejectsUnrepresentableResults(t *testing.T) {
 	tests := []struct {
 		name          string
