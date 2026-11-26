@@ -70,6 +70,8 @@ The script builds the actual `v0.1.0` native source through `git show`, compiles
 
 The summarizer groups records by input filename, full configuration and mode, and rejects duplicate trial numbers within a group. Separate input files remain separate experiments rather than being silently pooled. Run its checks with `python3 scripts/test_summarize_cuda.py`.
 
+The current benchmark script accepts `CUDA_ARCH`, defaulting to `sm_86` for the recorded RTX 3060 experiment. To target another architecture supported by your toolkit and GPU, pass, for example, `-e CUDA_ARCH=sm_80` to `docker run`. It applies the selected target to both the tagged baseline and current native runner and records `CUDA_ARCH=<target>` in `environment-$phase.txt`. This option requires the current script; the historical source selected above retains its original flags. Results on another target are a separate experiment. The bounded command/metadata check runs without CUDA hardware: `python3 -m unittest scripts/test_benchmark_arch.py` in a Linux environment.
+
 For a publicly obtainable alternative environment, this local Dockerfile pins the CUDA development and Go images:
 
 ```dockerfile
