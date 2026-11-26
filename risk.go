@@ -178,7 +178,7 @@ func PortfolioLoss(initial, final, holdings []float64) (float64, error) {
 		}
 		term := holdings[i] * (p - final[i])
 		if !finite(term) {
-			return 0, fmt.Errorf("portfolio loss term %d overflow", i)
+			overflow = true
 		}
 		if !overflow {
 			loss, correction = riskAdd(loss, correction, term)
@@ -187,16 +187,22 @@ func PortfolioLoss(initial, final, holdings []float64) (float64, error) {
 	}
 	loss += correction
 	if overflow || !finite(loss) {
-		// A float64 spans 2098 binary places, including subnormals. This
-		// precision holds an exact sum of any slice of finite float64 terms,
-		// including the extra bits needed for its element count. Only the rare
-		// overflowing running sum pays for multiprecision arithmetic.
-		precision := uint(2098 + bits.Len(uint(len(initial))))
-		var sum, term big.Float
+		// Products of float64 inputs span 4196 binary places, including
+		// subnormals. This precision holds their exact differences, products,
+		// and sum, with extra bits for the element count. Recompute from inputs
+		// so overflowing individual products can cancel before conversion.
+		precision := uint(4196 + bits.Len(uint(len(initial))))
+		var sum, term, price, holding big.Float
 		sum.SetPrec(precision)
 		term.SetPrec(precision)
+		price.SetPrec(precision)
+		holding.SetPrec(precision)
 		for i, p := range initial {
-			term.SetFloat64(holdings[i] * (p - final[i]))
+			term.SetFloat64(p)
+			price.SetFloat64(final[i])
+			term.Sub(&term, &price)
+			holding.SetFloat64(holdings[i])
+			term.Mul(&term, &holding)
 			sum.Add(&sum, &term)
 		}
 		loss, _ = sum.Float64()

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve finite impact prices and costs when spread plus temporary impact exceeds float64, and retain representable permanent midpoint moves.
+- Allow overflowing portfolio loss products to cancel before rounding the final loss to float64.
 - Preserve sample standard deviations for tiny and subnormal losses in risk summaries.
 - Compute finite risk means and expected shortfall across signed loss extremes, preserving cancellation residuals and subnormal mean rounding.
 - Deduplicate effective mode/configuration pairs in `qsbench` sweeps so each case receives one warm-up and one sample per trial.
