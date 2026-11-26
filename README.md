@@ -42,6 +42,24 @@ CLI output is newline-delimited JSON. The first record contains configuration an
 
 `-config path.json` loads a strict JSON object over explicit defaults. Unknown fields, extra JSON values, and invalid parameters return errors. Explicit flags override matching config values. `-store-paths` requests asset-major paths including the initial price. Use the Go API for custom models, sinks, portfolio holdings, and risk/impact summaries.
 
+When building from the current checkout, `-h` and `--help` print usage and exit successfully. Unknown flags and invalid inputs exit nonzero.
+
+For long runs, opt into scenario-count progress on stderr while keeping stdout as newline-delimited JSON:
+
+```sh
+go run ./cmd/quantaspindle -paths 10000 -summary-only -progress-every 3000
+```
+
+This reports `quantaspindle: progress delivered=3000`, then 6000, 9000, and 10000. Counts reflect scenarios successfully accepted by the output sink, including scenarios omitted by `-summary-only`; stdout is buffered. Reports can arrive in bursts after a concurrent wave finishes. The final count appears only if it differs from the last report, including on cancellation or failure, and does not imply successful completion. Only a JSON `summary` record indicates a successful run. `-progress-every 0` disables progress (the default); negative intervals are rejected.
+
+To inspect the resolved configuration without running a simulation:
+
+```sh
+go run ./cmd/quantaspindle -validate-only -config config.json -backend cpu -paths 5 -seed 42
+```
+
+This applies the same strict JSON parsing, explicit flag overrides, and configuration validation as a normal run, then emits exactly one record: `{"type":"validation","valid":true,"config":{...}}`. It checks flag names and values, rejects positional arguments, requires `-backend` to be `auto`, `cpu`, or `cuda`, and requires nonnegative `-timeout` and `-progress-every`. Configuration checks include dimensions, resource limits, asset parameters, transition probabilities, and correlation. Invalid input returns the same relevant error and nonzero status as a normal run. No backend is selected, CUDA runner is started, scenarios are generated, or run summary is emitted. The check does not establish device or runner availability or whether the chosen backend supports the model; `-cuda-runner` is accepted as a path without inspecting or executing it.
+
 ```go
 package main
 
