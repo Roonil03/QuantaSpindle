@@ -203,7 +203,6 @@ func TestCLIRangeRejectsInvalidRequests(t *testing.T) {
 		{[]string{"-start-id", "-1"}, "invalid value"},
 		{[]string{"-count", "-1"}, "invalid value"},
 		{[]string{"-start-id", "0", "-backend", "auto"}, "require -backend cpu"},
-		{[]string{"-count", "3", "-backend", "cuda"}, "require -backend cpu"},
 	} {
 		for _, validateOnly := range []bool{false, true} {
 			args := append([]string{"-backend", "cpu", "-paths", "8", "-steps", "2"}, tc.args...)
@@ -284,7 +283,7 @@ func TestCLIRangeProcessIntegration(t *testing.T) {
 		t.Fatalf("built CLI validation: records=%v stderr=%q", records, diagnostic)
 	}
 	checkRangeRecord(t, records[0], 3, 5)
-	for _, invalid := range [][]string{{"-count", "0"}, {"-start-id", "8", "-count", "1"}, {"-start-id", "1", "-count", "18446744073709551615"}, {"-backend", "auto", "-start-id", "0"}, {"-backend", "cuda", "-count", "3"}} {
+	for _, invalid := range [][]string{{"-count", "0"}, {"-start-id", "8", "-count", "1"}, {"-start-id", "1", "-count", "18446744073709551615"}, {"-backend", "auto", "-start-id", "0"}} {
 		for _, validateOnly := range []bool{false, true} {
 			modeArgs := append(append([]string(nil), base...), invalid...)
 			if validateOnly {

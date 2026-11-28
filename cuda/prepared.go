@@ -80,19 +80,32 @@ func (p *Prepared) Warm() bool {
 // BeginRun leases this runner exclusively until the returned session is closed.
 // Closing the lease retains the native process for the next independent Run.
 func (p *Prepared) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSession, error) {
-	lease, _, err := p.beginRun(ctx, cfg, false)
+	lease, _, err := p.beginRun(ctx, cfg, false, nil)
+	return lease, err
+}
+
+// BeginRunRange leases this runner for an absolute scenario range, validating
+// selected-count storage and batch work while retaining the total Paths space.
+func (p *Prepared) BeginRunRange(ctx context.Context, cfg qs.Config, startID, count uint64) (qs.BackendSession, error) {
+	lease, _, err := p.beginRun(ctx, cfg, false, &scenarioRange{startID, count})
 	return lease, err
 }
 
 // BeginWarmRun atomically leases an already warm process without starting a
 // replacement. A nil lease and false indicate that no warm process is available.
 func (p *Prepared) BeginWarmRun(ctx context.Context, cfg qs.Config) (qs.BackendSession, bool, error) {
-	return p.beginRun(ctx, cfg, true)
+	return p.beginRun(ctx, cfg, true, nil)
 }
 
-func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool) (qs.BackendSession, bool, error) {
-	if err := validateBatch(ctx, cfg, 0, min(cfg.BatchSize, cfg.Paths)); err != nil {
-		return nil, false, err
+func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool, bounds *scenarioRange) (qs.BackendSession, bool, error) {
+	var validationErr error
+	if bounds != nil {
+		validationErr = validateRange(ctx, cfg, *bounds)
+	} else {
+		validationErr = validateBatch(ctx, cfg, 0, min(cfg.BatchSize, cfg.Paths))
+	}
+	if validationErr != nil {
+		return nil, false, validationErr
 	}
 	select {
 	case p.gate <- struct{}{}:
@@ -130,7 +143,7 @@ func (p *Prepared) beginRun(ctx context.Context, cfg qs.Config, warmOnly bool) (
 		p.stream = s
 		p.ready.Store(s)
 	}
-	return &preparedLease{parent: p, stream: p.stream, warm: warm}, warm, nil
+	return &preparedLease{parent: p, stream: p.stream, warm: warm, bounds: bounds}, warm, nil
 }
 
 // Batch leases the runner for one direct batch. Concurrent calls are serialized.
@@ -180,6 +193,7 @@ type preparedLease struct {
 	mu     sync.RWMutex
 	closed bool
 	warm   bool
+	bounds *scenarioRange
 }
 
 func (*preparedLease) Name() string { return "cuda" }
@@ -192,6 +206,9 @@ func (s *preparedLease) Batch(ctx context.Context, cfg qs.Config, first uint64, 
 	defer s.mu.RUnlock()
 	if s.closed {
 		return nil, fmt.Errorf("%w: prepared Run session closed", ErrExecution)
+	}
+	if s.bounds != nil {
+		return s.stream.rangeBatch(ctx, cfg, *s.bounds, first, count)
 	}
 	return s.stream.Batch(ctx, cfg, first, count)
 }

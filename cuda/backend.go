@@ -140,14 +140,53 @@ func validateBatch(ctx context.Context, cfg quantaspindle.Config, start uint64, 
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if err := validateModel(cfg); err != nil {
+		return err
+	}
+	if err := validateBatchDimensions(cfg, start, count); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+type scenarioRange struct{ start, count uint64 }
+
+func validateRange(ctx context.Context, cfg quantaspindle.Config, bounds scenarioRange) error {
+	if ctx == nil {
+		return errors.New("CUDA: nil context")
+	}
+	if err := cfg.ValidateRange(bounds.start, bounds.count); err != nil {
+		return err
+	}
+	if err := validateModel(cfg); err != nil {
+		return err
+	}
+	if err := validateBatchDimensions(cfg, bounds.start, min(cfg.BatchSize, int(bounds.count))); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func validateRangeBatch(ctx context.Context, cfg quantaspindle.Config, bounds scenarioRange, first uint64, count int) error {
+	if err := validateRange(ctx, cfg, bounds); err != nil {
+		return err
+	}
+	if count <= 0 || first < bounds.start || first-bounds.start >= bounds.count || uint64(count) > bounds.count-(first-bounds.start) {
+		return errors.New("CUDA: batch lies outside selected scenario range")
+	}
+	return validateBatchDimensions(cfg, first, count)
+}
+
+func validateModel(cfg quantaspindle.Config) error {
 	if len(cfg.Assets) != 1 || len(cfg.Regimes) != 0 || len(cfg.Transition) != 0 || len(cfg.Correlation) != 0 || cfg.StorePaths {
 		return fmt.Errorf("%w: requires one asset, no correlation/regimes, and StorePaths=false", ErrUnsupported)
 	}
+	return nil
+}
+
+func validateBatchDimensions(cfg quantaspindle.Config, start uint64, count int) error {
 	if count <= 0 || count > maxScenarios || cfg.Steps > maxSteps || uint64(count) > maxUpdates/uint64(cfg.Steps) || start >= uint64(cfg.Paths) || uint64(count) > uint64(cfg.Paths)-start {
 		return fmt.Errorf("CUDA: invalid batch range or runner dimension limits (count<=%d, steps<=%d, updates<=%d)", maxScenarios, maxSteps, maxUpdates)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return nil
 }
