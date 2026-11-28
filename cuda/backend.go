@@ -34,7 +34,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -192,19 +191,9 @@ func validateBatchDimensions(cfg quantaspindle.Config, start uint64, count int) 
 }
 
 func (b *Backend) runner() (string, time.Duration, error) {
-	path := b.Runner
-	if path == "" {
-		path = os.Getenv("QS_CUDA_RUNNER")
-	}
-	if path == "" {
-		path = os.Getenv("QUANTASPINDLE_CUDA_RUNNER")
-	}
-	if path == "" {
-		path = "quantaspindle-cuda"
-	}
-	resolved, err := exec.LookPath(path)
+	resolved, err := ResolveRunner(b.Runner)
 	if err != nil {
-		return "", 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return "", 0, err
 	}
 	timeout := b.Timeout
 	if timeout == 0 {

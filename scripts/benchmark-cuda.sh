@@ -25,7 +25,7 @@ arch=${CUDA_ARCH:-sm_86}
   nvidia-smi
   git -c safe.directory=/work rev-parse HEAD HEAD^{tree} v0.1.0^{commit} v0.1.0^{tree}
   git -c safe.directory=/work diff --stat
-  sha256sum engine.go cuda/*.go accelerators/cuda/runner.cu cmd/qsbench/main.go scripts/benchmark-cuda.sh
+  sha256sum engine.go cuda/*.go accelerators/cuda/runner.cu cmd/qsbench/*.go scripts/benchmark-cuda.sh
 } > "$out/environment-$phase.txt"
 # Build the actual release kernel, not a reimplementation of the baseline.
 git -c safe.directory=/work show v0.1.0:accelerators/cuda/runner.cu > "$out/runner-v0.1.0.cu"

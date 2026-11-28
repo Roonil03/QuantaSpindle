@@ -9,6 +9,14 @@
 - Run both a single-batch case and a multibatch case. Per-run process reuse can amortize setup only when a run contains multiple batches; a warm-up run does not keep its process alive for the next run.
 - Include complete `Run` startup and close in full timings. Kernel event time, runner request time, and Go allocation counts cover different boundaries. Go allocations exclude native and device allocations.
 
+## Direct qsbench provenance
+
+Current `qsbench` adds a `build` object to every trial record, using the executable's Go build information: `module_path`, `module_version`, `vcs_revision`, and `vcs_modified` when present. A missing VCS field is omitted, so an unknown modified state is not reported as clean. `(devel)` is preserved for local module builds. If Go build information is unavailable, `build.available` is false. Build stamping depends on the build command and source checkout; it does not identify every compiler option or replace an executable hash.
+
+CUDA trial records also contain `cuda_runner` with the resolved absolute executable `path`, `sha256`, and `available`. Lookup matches execution: `-cuda-runner`, overridden for `cuda-batch` by a nonempty `-cuda-batch-runner`, then `QS_CUDA_RUNNER`, `QUANTASPINDLE_CUDA_RUNNER`, and `quantaspindle-cuda` on PATH. Explicit executable names also use PATH. Each selected mode's runner is resolved and hashed once before warm-up; all its later runs use that absolute path, including when the two CUDA modes select separate executables. If the executable resolves but cannot be read, execution remains possible and records set `available` false with an `error` instead of guessing a digest. Resolution failure still fails the benchmark, as it would execution.
+
+Build information and hashing are outside trial timing and Go allocation deltas. `elapsed_ns` still covers `Run`, including native process startup and shutdown; it excludes provenance collection, GC, memory-stat reads, and JSON encoding. Runner identity is a snapshot of trusted local file bytes before warm-up. Keep the executable and any symlink targets unchanged throughout the sweep: pinning its path prevents later environment/PATH changes from selecting another executable, but does not prevent replacement of that file or describe dynamic libraries and device state. Existing scripts' source and binary hash files remain authoritative for their historical experiments; the new fields do not retroactively change those records.
+
 ## Historical v0.1.0 environment and commands
 
 Run the historical commands below from the recorded original source (the matched CPU/CUDA experiment used delivery commit `3f41ec8`). Running them from v0.1.1 selects its session-enabled `cuda` mode and produces a new experiment, not the original one-process-per-batch baseline. The current `scripts/benchmark-cuda.sh` instead builds the tagged v0.1.0 runner and selects `cuda-batch` explicitly alongside the current `cuda` mode.
