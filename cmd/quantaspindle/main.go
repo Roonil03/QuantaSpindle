@@ -36,7 +36,7 @@ func main() {
 	}
 }
 
-func execute(ctx context.Context, args []string, output, diagnostic io.Writer) error {
+func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (resultErr error) {
 	cfg := qs.DefaultConfig()
 	fs := flag.NewFlagSet("quantaspindle", flag.ContinueOnError)
 	fs.SetOutput(diagnostic)
@@ -55,7 +55,17 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	summaryOnly := fs.Bool("summary-only", false, "omit individual scenario records")
 	progressEvery := fs.Int("progress-every", 0, "report delivered scenario counts to stderr every N scenarios; zero disables")
 	validateOnly := fs.Bool("validate-only", false, "emit resolved config and validation status without selecting a backend or running")
+	fs.Bool("json-errors", false, "also emit startup failures as JSON on stdout; stderr diagnostics are retained")
 	timeout := fs.Duration("timeout", 0, "whole run deadline; zero disables")
+	jsonErrors := scanJSONErrors(args, fs)
+	outputStarted := false
+	defer func() {
+		if jsonErrors && !outputStarted && resultErr != nil && !errors.Is(resultErr, flag.ErrHelp) {
+			if err := json.NewEncoder(output).Encode(map[string]any{"type": "error", "error": resultErr.Error()}); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("write JSON error: %w", err))
+			}
+		}
+	}()
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -176,6 +186,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		return fmt.Errorf("unknown backend %q; use auto, cpu or cuda", *backendName)
 	}
 	if *validateOnly {
+		outputStarted = true
 		return json.NewEncoder(output).Encode(struct {
 			Type   string         `json:"type"`
 			Valid  bool           `json:"valid"`
@@ -221,6 +232,9 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		metadata["selection"] = selected.Decision
 		metadata["execution_config"] = executionConfig
 	}
+	// Once output is attempted, avoid appending a startup error to a partial
+	// metadata record if the destination fails.
+	outputStarted = true
 	if err := encoder.Encode(metadata); err != nil {
 		return err
 	}
@@ -258,12 +272,27 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 		runErr = errors.Join(runErr, selected.Close())
 	}
 	elapsed := time.Since(started)
+	addRunDetails := func(record map[string]any) {
+		record["elapsed_ns"] = elapsed.Nanoseconds()
+		if gpu != nil {
+			record["cuda"] = gpu.Stats()
+		}
+		if selected != nil {
+			record["selection"] = selected.Decision
+			if stats, ok := selected.CUDAStats(); ok {
+				record["cuda"] = stats
+			}
+		}
+	}
 	if runErr != nil {
-		_ = encoder.Encode(map[string]any{"type": "error", "error": runErr.Error(), "completed": summary.Scenarios})
+		record := map[string]any{"type": "error", "error": runErr.Error(), "completed": summary.Scenarios}
+		addRunDetails(record)
+		_ = encoder.Encode(record)
 		_ = writer.Flush()
 		return runErr
 	}
-	result := map[string]any{"type": "summary", "summary": summary, "elapsed_ns": elapsed.Nanoseconds()}
+	result := map[string]any{"type": "summary", "summary": summary}
+	addRunDetails(result)
 	if requestedRange != nil {
 		result["range"] = requestedRange
 		result["scope"] = "range"
@@ -272,15 +301,6 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) e
 	if elapsed > 0 {
 		result["scenarios_per_second"] = float64(summary.Scenarios) / elapsed.Seconds()
 		result["asset_paths_per_second"] = float64(summary.Scenarios) * float64(len(cfg.Assets)) / elapsed.Seconds()
-	}
-	if gpu != nil {
-		result["cuda"] = gpu.Stats()
-	}
-	if selected != nil {
-		result["selection"] = selected.Decision
-		if stats, ok := selected.CUDAStats(); ok {
-			result["cuda"] = stats
-		}
 	}
 	if err := encoder.Encode(result); err != nil {
 		return err
