@@ -337,7 +337,7 @@ func (m runMean) mean(count uint64) float64 {
 // On error it returns only the successfully delivered prefix summary. The input
 // Config and its slices must remain immutable until Run returns.
 func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) error) (summary RunSummary, runErr error) {
-	return runRange(ctx, c, backend, 0, uint64(c.Paths), false, sink)
+	return runRange(ctx, c, backend, 0, uint64(c.Paths), false, sink, nil)
 }
 
 // RunRange delivers count scenarios starting at startID, retaining their IDs
@@ -346,10 +346,10 @@ func Run(ctx context.Context, c Config, backend Backend, sink func(Scenario) err
 // selected count. Backends receive the original Config and absolute batch IDs;
 // custom backends may impose additional validation or resource requirements.
 func RunRange(ctx context.Context, c Config, backend Backend, startID, count uint64, sink func(Scenario) error) (RunSummary, error) {
-	return runRange(ctx, c, backend, startID, count, true, sink)
+	return runRange(ctx, c, backend, startID, count, true, sink, nil)
 }
 
-func runRange(ctx context.Context, c Config, backend Backend, startID, count uint64, selected bool, sink func(Scenario) error) (summary RunSummary, runErr error) {
+func runRange(ctx context.Context, c Config, backend Backend, startID, count uint64, selected bool, sink func(Scenario) error, state *RunSummaryState) (summary RunSummary, runErr error) {
 	if ctx == nil {
 		return summary, fmt.Errorf("context is nil")
 	}
@@ -386,11 +386,22 @@ func runRange(ctx context.Context, c Config, backend Backend, startID, count uin
 	summary.MeanRealizedVolatility = make([]float64, len(c.Assets))
 	summary.MeanMaxDrawdown = make([]float64, len(c.Assets))
 	metrics := make([]float64, 3*len(c.Assets))
-	means := make([]runMean, len(metrics))
-	_, exponent := math.Frexp(float64(count))
-	for i := range means {
-		// One extra bit leaves headroom for accumulation rounding.
-		means[i].exponent = exponent + 1
+	var means []runMean
+	if state == nil {
+		means = make([]runMean, len(metrics))
+		_, exponent := math.Frexp(float64(count))
+		for i := range means {
+			// One extra bit leaves headroom for accumulation rounding.
+			means[i].exponent = exponent + 1
+		}
+	} else {
+		// All shards share the total ID-space scale, rather than their
+		// individual counts, so compensated components merge without rescaling.
+		if !validSummaryIdentity(summary.Backend) {
+			return summary, fmt.Errorf("summary state session backend name must have 1..4096 valid UTF-8 bytes")
+		}
+		state.backend = summary.Backend
+		means = state.means
 	}
 	defer func() {
 		if summary.Scenarios == 0 {
@@ -466,6 +477,13 @@ func runRange(ctx context.Context, c Config, backend Backend, startID, count uin
 				summary.Scenarios++
 				for i, value := range metrics {
 					means[i].add(value)
+				}
+				if state != nil {
+					state.count = summary.Scenarios
+					if len(state.ranges) == 0 {
+						state.ranges = append(state.ranges, ScenarioRange{StartID: startID})
+					}
+					state.ranges[0].Count = summary.Scenarios
 				}
 			}
 		}
