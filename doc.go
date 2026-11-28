@@ -23,6 +23,8 @@
 // them, in which case storage is the caller's responsibility.
 //
 // Use DefaultConfig and Run(ctx, cfg, CPU{}, sink) for portable CPU execution.
+// CPU.Prepare snapshots a configuration and reuses its correlation factor for
+// concurrent, arbitrary-ID PreparedCPU.Batch calls with independent contexts.
 // Full paths are opt-in; exact empirical VaR/expected shortfall require callers
 // to retain observations. SquareRootImpact is a separate execution overlay and
 // does not automatically alter simulated paths.
