@@ -79,8 +79,9 @@ type benchmarkDependencies struct {
 	build  func() (*debug.BuildInfo, bool)
 	runner func(string) runnerIdentity
 	now    func() time.Time
+	since  func(time.Time) time.Duration
 }
 
 func defaultBenchmarkDependencies() benchmarkDependencies {
-	return benchmarkDependencies{debug.ReadBuildInfo, identifyRunner, time.Now}
+	return benchmarkDependencies{debug.ReadBuildInfo, identifyRunner, time.Now, time.Since}
 }

@@ -65,7 +65,7 @@ func TestBuildIdentityEmittedAcrossRecords(t *testing.T) {
 		deps := defaultBenchmarkDependencies()
 		calls := 0
 		deps.build = func() (*debug.BuildInfo, bool) { calls++; return info, info != nil }
-		records := collectIdentityRecords(t, deps, "-backend", "cpu", "-paths", "64", "-steps", "64")
+		records := collectIdentityRecords(t, deps, "-backend", "cpu", "-paths", "4096", "-steps", "64")
 		if calls != 1 || len(records) != 2 {
 			t.Fatalf("build info not collected once: calls=%d records=%d", calls, len(records))
 		}
@@ -251,6 +251,10 @@ func TestIdentityCollectionOutsideTrialClockAndPinnedExecution(t *testing.T) {
 		clock = clock.Add(time.Nanosecond)
 		return clock
 	}
+	deps.since = func(start time.Time) time.Duration {
+		clock = clock.Add(time.Nanosecond)
+		return clock.Sub(start)
+	}
 	deps.build = func() (*debug.BuildInfo, bool) {
 		clock = clock.Add(time.Hour)
 		return nil, false
@@ -288,7 +292,7 @@ func TestUnreadableIdentityDoesNotPreventExecution(t *testing.T) {
 		}
 	}
 	deps.runner = func(string) runnerIdentity { t.Fatal("CPU mode looked up a CUDA runner"); return runnerIdentity{} }
-	for _, record := range collectIdentityRecords(t, deps, "-backend", "cpu", "-paths", "64", "-steps", "64") {
+	for _, record := range collectIdentityRecords(t, deps, "-backend", "cpu", "-paths", "4096", "-steps", "64") {
 		if record.Runner != nil {
 			t.Fatal("CPU record has a runner identity")
 		}

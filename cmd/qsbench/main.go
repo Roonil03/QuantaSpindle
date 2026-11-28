@@ -120,7 +120,7 @@ func runWithDependencies(deps benchmarkDependencies) error {
 			runtime.ReadMemStats(&before)
 			started := deps.now()
 			summary, err := qs.Run(context.Background(), cfg, backend, nil)
-			elapsed := deps.now().Sub(started)
+			elapsed := deps.since(started)
 			runtime.ReadMemStats(&after)
 			if err != nil {
 				return err
