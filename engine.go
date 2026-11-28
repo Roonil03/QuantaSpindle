@@ -46,6 +46,13 @@ type RunBackend interface {
 	BeginRun(context.Context, Config) (BackendSession, error)
 }
 
+// RangeRunBackend optionally prepares a session for a selected RunRange.
+// Config.Paths retains the total ID space; startID and count describe the work
+// this session must validate and serve. RunRange prefers this over BeginRun.
+type RangeRunBackend interface {
+	BeginRunRange(context.Context, Config, uint64, uint64) (BackendSession, error)
+}
+
 // CPU is the portable, deterministic SplitMix64-v1/Box-Muller backend.
 type CPU struct{}
 
@@ -366,8 +373,14 @@ func runRange(ctx context.Context, c Config, backend Backend, startID, count uin
 	if err := ctx.Err(); err != nil {
 		return summary, err
 	}
-	if scoped, ok := backend.(RunBackend); ok {
-		session, err := scoped.BeginRun(ctx, c)
+	var begin func() (BackendSession, error)
+	if scoped, ok := backend.(RangeRunBackend); selected && ok {
+		begin = func() (BackendSession, error) { return scoped.BeginRunRange(ctx, c, startID, count) }
+	} else if scoped, ok := backend.(RunBackend); ok {
+		begin = func() (BackendSession, error) { return scoped.BeginRun(ctx, c) }
+	}
+	if begin != nil {
+		session, err := begin()
 		if err != nil {
 			return summary, err
 		}

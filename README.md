@@ -62,13 +62,23 @@ go run ./cmd/quantaspindle -validate-only -config config.json -backend cpu -path
 
 This applies the same strict JSON parsing, explicit flag overrides, and configuration validation as a normal run, then emits exactly one record: `{"type":"validation","valid":true,"config":{...}}`. It checks flag names and values, rejects positional arguments, requires `-backend` to be `auto`, `cpu`, or `cuda`, and requires nonnegative `-timeout` and `-progress-every`. Configuration checks include dimensions, resource limits, asset parameters, transition probabilities, and correlation. Invalid input returns the same relevant error and nonzero status as a normal run. No backend is selected, CUDA runner is started, scenarios are generated, or run summary is emitted. The check does not establish device or runner availability or whether the chosen backend supports the model; `-cuda-runner` is accepted as a path without inspecting or executing it.
 
+To preview automatic selection on this host, use `-select-only -backend auto`:
+
+```sh
+go run ./cmd/quantaspindle -select-only -backend auto -paths 262144 -steps 252
+```
+
+This emits exactly one `type:selection` record containing the requested config, selected backend, decision, effective `execution_config`, and the same build/host identity as run metadata. It closes opened resources before reporting success and generates no remaining scenarios or run summary. Unlike `-validate-only`, an eligible preview starts a trusted local CUDA runner and executes up to one full batch as a probe, then discards those results. A large batch can therefore incur significant work. A subsequent run makes a fresh selection; preview does not reserve a device or guarantee future availability. Probe or shutdown failures exit nonzero without a successful selection record; `-json-errors` can encode those startup errors. `-select-only` requires `auto`, rejects ranges, and cannot be combined with `-validate-only`.
+
 For a manual restart after retaining IDs 0 through 399999 from a CPU run, generate just the remaining IDs with the same configuration, seed, backend, and toolchain:
 
 ```sh
 go run ./cmd/quantaspindle -backend cpu -paths 1000000 -start-id 400000 -count 600000 -seed 42
 ```
 
-`-paths` remains the total scenario ID space; this command selects IDs `[400000, 1000000)` without renumbering IDs or changing their seeds. Both range flags are optional: omitting `-start-id` starts at zero, and omitting `-count` selects all remaining IDs. An explicit range requires `-backend cpu`, including an explicitly requested full range. Auto and CUDA selections are rejected. The start must be below `paths`, the count must be positive, and the count cannot exceed `paths - start-id`. Negative or overflowing values are rejected. This supports an external checkpoint workflow; callers must retain the delivered prefix and choose the restart ID themselves.
+`-paths` remains the total scenario ID space; this command selects IDs `[400000, 1000000)` without renumbering IDs or changing their seeds. Both range flags are optional: omitting `-start-id` starts at zero, and omitting `-count` selects all remaining IDs. An explicit range requires `-backend cpu` or `-backend cuda`, including an explicitly requested full range. Auto ranges remain rejected; selecting a smaller count never silently changes routing. The start must be below `paths`, the count must be positive, and the count cannot exceed `paths - start-id`. Negative or overflowing values are rejected. This supports an external checkpoint workflow; callers must retain the delivered prefix and choose the restart ID themselves.
+
+Explicit CUDA ranges support the same single-asset GBM model as full CUDA runs and validate that capability before starting a runner. Range session startup and each batch use the selected count for storage and batch-work limits, retaining the total `Paths` ID space. CUDA replay remains scoped to the same runner build, device, and toolchain. `-validate-only -backend cuda` remains a generic configuration check, including for ranges; it does not check CUDA capability or start a runner. [CUDA ranges and lifecycle](docs/cuda.md#scenario-ranges-and-selection-preview)
 
 Explicit ranges add `"range":{"start_id":400000,"count":600000}` to metadata and the final summary record. The summary also includes `"scope":"range"`; its scenario count and means cover only the selected range. Without either range flag, the output schema and full-run behavior stay unchanged. Range storage validation uses the selected count and accounts for a partial final batch, while retaining the configured total ID space. `-validate-only` performs the same range checks and includes the requested range in its sole validation record. Progress and error `completed` counts measure scenarios delivered in this invocation, starting from zero, rather than absolute IDs.
 

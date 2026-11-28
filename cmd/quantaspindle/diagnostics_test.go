@@ -269,6 +269,17 @@ func TestCLICPURuntimeErrorDetailsProcess(t *testing.T) {
 // diagnosticCUDARunner exercises the real stream adapter with one successful
 // batch followed by a device failure. No shell or actual GPU is required.
 func diagnosticCUDARunner(mode string) int {
+	log := func(message string) {
+		if path := os.Getenv("QS_CLI_TEST_CUDA_LOG"); path != "" {
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if err == nil {
+				fmt.Fprintln(f, message)
+				f.Close()
+			}
+		}
+	}
+	log("start")
+	defer log("exit")
 	if len(os.Args) != 2 || os.Args[1] != "--stream" {
 		return 2
 	}
@@ -278,9 +289,18 @@ func diagnosticCUDARunner(mode string) int {
 	for batch := 0; ; batch++ {
 		var request [72]byte
 		if _, err := io.ReadFull(os.Stdin, request[:]); err == io.EOF {
+			if mode == "shutdown-failure" {
+				fmt.Fprintln(os.Stderr, "synthetic shutdown failure")
+				return 7
+			}
 			return 0
 		} else if err != nil {
 			return 2
+		}
+		log(fmt.Sprintf("request %d %d", binary.LittleEndian.Uint64(request[24:]), binary.LittleEndian.Uint64(request[16:])))
+		if mode == "unavailable" {
+			fmt.Fprintln(os.Stderr, "quantaspindle-cuda: CUDA unavailable: synthetic unavailable device")
+			return 7
 		}
 		if mode == "fail-first" || (mode == "fail-after-one" && batch > 0) {
 			fmt.Fprintln(os.Stderr, "synthetic device failure")
@@ -300,6 +320,9 @@ func diagnosticCUDARunner(mode string) int {
 			for j, value := range []float64{price, price/100 - 1, .2, .1} {
 				binary.LittleEndian.PutUint64(response[176+i*32+j*8:], math.Float64bits(value))
 			}
+		}
+		if mode == "protocol-error" {
+			response[0] = 'x'
 		}
 		if _, err := os.Stdout.Write(response); err != nil {
 			return 2

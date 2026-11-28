@@ -44,8 +44,8 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (
 	backendName := fs.String("backend", "auto", "auto, cpu or cuda; explicit modes pin the backend")
 	runner := fs.String("cuda-runner", "", "path to the trusted native CUDA executable")
 	paths := fs.Int("paths", cfg.Paths, "scenario count, one path per asset per scenario")
-	startID := fs.Uint64("start-id", 0, "first scenario ID in a CPU range; requires -backend cpu")
-	rangeCount := fs.Uint64("count", 0, "scenarios in a CPU range; defaults to paths minus start-id")
+	startID := fs.Uint64("start-id", 0, "first scenario ID in an explicit cpu or cuda range")
+	rangeCount := fs.Uint64("count", 0, "scenarios in an explicit backend range; defaults to paths minus start-id")
 	steps := fs.Int("steps", cfg.Steps, "number of time intervals")
 	dt := fs.Float64("dt", cfg.DT, "interval length in years")
 	seed := fs.Uint64("seed", cfg.Seed, "run seed")
@@ -55,6 +55,7 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (
 	summaryOnly := fs.Bool("summary-only", false, "omit individual scenario records")
 	progressEvery := fs.Int("progress-every", 0, "report delivered scenario counts to stderr every N scenarios; zero disables")
 	validateOnly := fs.Bool("validate-only", false, "emit resolved config and validation status without selecting a backend or running")
+	selectOnly := fs.Bool("select-only", false, "preview automatic selection, probing CUDA when eligible, then close resources without running remaining scenarios")
 	fs.Bool("json-errors", false, "also emit startup failures as JSON on stdout; stderr diagnostics are retained")
 	timeout := fs.Duration("timeout", 0, "whole run deadline; zero disables")
 	jsonErrors := scanJSONErrors(args, fs)
@@ -154,6 +155,12 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (
 	if *progressEvery < 0 {
 		return errors.New("progress-every must be nonnegative")
 	}
+	if *validateOnly && *selectOnly {
+		return errors.New("validate-only and select-only are mutually exclusive")
+	}
+	if *selectOnly && *backendName != "auto" {
+		return errors.New("select-only requires -backend auto")
+	}
 	if *timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
@@ -177,8 +184,8 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (
 	if validationErr != nil {
 		return validationErr
 	}
-	if explicitRange && *backendName != "cpu" {
-		return errors.New("scenario ranges require -backend cpu; auto and cuda are unsupported")
+	if explicitRange && *backendName != "cpu" && *backendName != "cuda" {
+		return errors.New("scenario ranges require -backend cpu or -backend cuda; auto is unsupported")
 	}
 	switch *backendName {
 	case "auto", "cpu", "cuda":
@@ -231,6 +238,16 @@ func execute(ctx context.Context, args []string, output, diagnostic io.Writer) (
 	if selected != nil {
 		metadata["selection"] = selected.Decision
 		metadata["execution_config"] = executionConfig
+	}
+	if *selectOnly {
+		// Close before claiming a successful preview, including shutdown errors.
+		// The shared deferred Close remains the fallback for every earlier exit.
+		if err := selected.Close(); err != nil {
+			return err
+		}
+		metadata["type"] = "selection"
+		outputStarted = true
+		return json.NewEncoder(output).Encode(metadata)
 	}
 	// Once output is attempted, avoid appending a startup error to a partial
 	// metadata record if the destination fails.

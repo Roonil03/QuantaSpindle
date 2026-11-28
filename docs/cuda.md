@@ -61,6 +61,7 @@ or a failing runner fails the tests explicitly.
 ## Per-run process and resource lifecycle (v0.1.1)
 
 - `Run` detects the optional `quantaspindle.RunBackend` interface and calls `BeginRun(context.Context, Config) (BackendSession, error)`. A `BackendSession` implements `Backend` and `Close() error`. `Run` owns and closes that session on success and every error path.
+- `RunRange` prefers the optional `quantaspindle.RangeRunBackend` interface and calls `BeginRunRange(ctx, cfg, startID, count)`. CUDA and prepared CUDA implement it so session startup and batch validation use selected-count resource limits while retaining `cfg.Paths` as the total ID space. Other backends keep their existing `BeginRun` or direct-batch lifecycle.
 - CUDA starts one native child with `--stream` per run. Its batches are serialized over one binary stream, and the child retains its CUDA device state, events, and output buffers between requests. Separate runs own separate sessions; there is no global pool or reuse across runs.
 - Direct `cuda.Backend.Batch` calls preserve the v1 one-shot interface: one process handles one batch and exits. Existing custom backends that implement only `Backend` keep their original lifecycle.
 - Worker count still controls Go scheduling and bounded waves. Multiple workers in one CUDA run queue on the same session; they do not create concurrent kernels. Start with one worker and benchmark the intended batch and scenario counts.
@@ -102,6 +103,28 @@ for _, cfg := range requests {
 `Prepare` opens the runner and executes a one-scenario, one-step initialization probe. The probe contributes to preparation time. User batch and scenario counters start with real requests. A prepared process serves one run at a time, retains allocations up to its largest batch and releases them on close. A caller waiting to use it can cancel. Pass `prepared` directly to `quantaspindle.Run` for explicit CUDA execution. The [startup benchmark](cuda-startup.md) measures preparation, the first real request, later requests and shutdown.
 
 The context passed to `Prepare` governs the service lifetime. Use a separate request context for each `Run`. An exchange failure invalidates the runner. A later explicit CUDA run can reopen it. `Warm()` is a nonblocking snapshot: it is false during recovery and after closure, and becomes true after a successful batch on the current process. When the distinction affects routing, `BeginWarmRun` checks readiness while acquiring the exclusive run session and returns a nil session if the process has cooled. The lease's `WasWarm()` records its state at acquisition. Hybrid uses this distinction to keep a queued small job from silently paying to restart CUDA.
+
+## Scenario ranges and selection preview
+
+From a current checkout, explicit CUDA ranges use the same absolute-ID contract as CPU ranges:
+
+```sh
+go run ./cmd/quantaspindle -backend cuda -paths 1000000 -start-id 400000 -count 600000 -workers 1 -batch 16384 -summary-only -progress-every 100000
+```
+
+Only IDs `[400000,1000000)` are generated. Config `Paths` still describes the full million-ID space; metadata and summary include the requested `range`, and the summary is labeled `scope:range`. Delivered/progress/error counts start from zero for this invocation. Absolute IDs preserve the runner's Philox seed mapping across batch partitions and separate jobs. Replay requires the same runner build, device, and toolchain; it does not promise CPU/CUDA equality or cross-device bitwise replay. Weight per-range aggregate means by their scenario counts when combining them; other aggregate statistics can require additional information.
+
+CUDA capability checks still reject stored paths, multiasset inputs, supplied correlation, and regimes before runner startup. Bounds are checked without addition overflow. Working storage is assessed using the selected count, including a partial final batch. The per-request update limit uses the largest batch within the selected range, even if `min(BatchSize, Paths) * Steps` for the full ID space would exceed it. Each session batch must stay inside the selected range. `RunRange` supports both `*cuda.Backend` and a reusable `*cuda.Prepared`; each range lease is closed by the engine, and the service still owns the prepared process.
+
+Automatic ranges remain unsupported. To inspect automatic selection for a full workload without completing it:
+
+```sh
+go run ./cmd/quantaspindle -select-only -backend auto -paths 262144 -steps 252 -workers 1 -batch 8192
+```
+
+The sole `type:selection` JSON record contains `config`, `backend`, `selection`, `execution_config`, and the same precision/build/host fields as run metadata. The CLI shares the normal `hybrid.Select` path and closes its selection before emitting this success record. CPU choices for unsupported or below-threshold workloads do not start a runner. An eligible CUDA choice starts the trusted local runner and computes up to one complete batch as a probe. Those results are discarded, so preview can do substantial work and its cost grows with the probe workload. It emits no scenarios or successful run summary. A future run probes and selects again under the then-current host state.
+
+Classified CUDA unavailability produces the same CPU fallback decision as a normal run. Protocol, execution, cancellation, and shutdown errors fail the preview; they do not claim successful selection. `-json-errors` optionally emits those startup failures as JSON. `-select-only` requires `-backend auto`, rejects ranges, and is mutually exclusive with `-validate-only`. Generic validation remains side-effect-free and does not test device availability or CUDA model support, including for an explicit CUDA range.
 
 ## Mathematics, memory and replay
 
