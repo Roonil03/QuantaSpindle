@@ -52,6 +52,9 @@ func TestValidation(t *testing.T) {
 			if _, err := (CPU{}).Batch(context.Background(), c, 0, 1); err == nil {
 				t.Fatal("batch accepted invalid config")
 			}
+			if _, err := (CPU{}).Prepare(context.Background(), c); err == nil {
+				t.Fatal("preparation accepted invalid config")
+			}
 		})
 	}
 	c := tinyConfig()

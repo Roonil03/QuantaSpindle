@@ -21,6 +21,9 @@ import (
 
 // The test executable doubles as a portable, invocation-detecting CUDA runner.
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("QS_CLI_TEST_CUDA_MODE"); mode != "" {
+		os.Exit(diagnosticCUDARunner(mode))
+	}
 	if marker := os.Getenv("QS_CLI_TEST_RUNNER_MARKER"); marker != "" {
 		if err := os.WriteFile(marker, []byte("invoked"), 0600); err != nil {
 			fmt.Fprintln(os.Stderr, err)

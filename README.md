@@ -44,6 +44,8 @@ CLI output is newline-delimited JSON. The first record contains configuration an
 
 When building from the current checkout, `-h` and `--help` print usage and exit successfully. Unknown flags and invalid inputs exit nonzero.
 
+`-json-errors` additionally emits one JSON error record on stdout for flag, configuration, validation, or backend-selection failures before metadata. Stderr diagnostics and nonzero failure exits are retained. Failures after metadata include `elapsed_ns` and the available selection/CUDA statistics in their existing error record, without a duplicate startup record or a successful summary. [CLI error records and option-scan rules](docs/cli-errors.md)
+
 For long runs, opt into scenario-count progress on stderr while keeping stdout as newline-delimited JSON:
 
 ```sh
@@ -60,13 +62,23 @@ go run ./cmd/quantaspindle -validate-only -config config.json -backend cpu -path
 
 This applies the same strict JSON parsing, explicit flag overrides, and configuration validation as a normal run, then emits exactly one record: `{"type":"validation","valid":true,"config":{...}}`. It checks flag names and values, rejects positional arguments, requires `-backend` to be `auto`, `cpu`, or `cuda`, and requires nonnegative `-timeout` and `-progress-every`. Configuration checks include dimensions, resource limits, asset parameters, transition probabilities, and correlation. Invalid input returns the same relevant error and nonzero status as a normal run. No backend is selected, CUDA runner is started, scenarios are generated, or run summary is emitted. The check does not establish device or runner availability or whether the chosen backend supports the model; `-cuda-runner` is accepted as a path without inspecting or executing it.
 
+To preview automatic selection on this host, use `-select-only -backend auto`:
+
+```sh
+go run ./cmd/quantaspindle -select-only -backend auto -paths 262144 -steps 252
+```
+
+This emits exactly one `type:selection` record containing the requested config, selected backend, decision, effective `execution_config`, and the same build/host identity as run metadata. It closes opened resources before reporting success and generates no remaining scenarios or run summary. Unlike `-validate-only`, an eligible preview starts a trusted local CUDA runner and executes up to one full batch as a probe, then discards those results. A large batch can therefore incur significant work. A subsequent run makes a fresh selection; preview does not reserve a device or guarantee future availability. Probe or shutdown failures exit nonzero without a successful selection record; `-json-errors` can encode those startup errors. `-select-only` requires `auto`, rejects ranges, and cannot be combined with `-validate-only`.
+
 For a manual restart after retaining IDs 0 through 399999 from a CPU run, generate just the remaining IDs with the same configuration, seed, backend, and toolchain:
 
 ```sh
 go run ./cmd/quantaspindle -backend cpu -paths 1000000 -start-id 400000 -count 600000 -seed 42
 ```
 
-`-paths` remains the total scenario ID space; this command selects IDs `[400000, 1000000)` without renumbering IDs or changing their seeds. Both range flags are optional: omitting `-start-id` starts at zero, and omitting `-count` selects all remaining IDs. An explicit range requires `-backend cpu`, including an explicitly requested full range. Auto and CUDA selections are rejected. The start must be below `paths`, the count must be positive, and the count cannot exceed `paths - start-id`. Negative or overflowing values are rejected. This supports an external checkpoint workflow; callers must retain the delivered prefix and choose the restart ID themselves.
+`-paths` remains the total scenario ID space; this command selects IDs `[400000, 1000000)` without renumbering IDs or changing their seeds. Both range flags are optional: omitting `-start-id` starts at zero, and omitting `-count` selects all remaining IDs. An explicit range requires `-backend cpu` or `-backend cuda`, including an explicitly requested full range. Auto ranges remain rejected; selecting a smaller count never silently changes routing. The start must be below `paths`, the count must be positive, and the count cannot exceed `paths - start-id`. Negative or overflowing values are rejected. This supports an external checkpoint workflow; callers must retain the delivered prefix and choose the restart ID themselves.
+
+Explicit CUDA ranges support the same single-asset GBM model as full CUDA runs and validate that capability before starting a runner. Range session startup and each batch use the selected count for storage and batch-work limits, retaining the total `Paths` ID space. CUDA replay remains scoped to the same runner build, device, and toolchain. `-validate-only -backend cuda` remains a generic configuration check, including for ranges; it does not check CUDA capability or start a runner. [CUDA ranges and lifecycle](docs/cuda.md#scenario-ranges-and-selection-preview)
 
 Explicit ranges add `"range":{"start_id":400000,"count":600000}` to metadata and the final summary record. The summary also includes `"scope":"range"`; its scenario count and means cover only the selected range. Without either range flag, the output schema and full-run behavior stay unchanged. Range storage validation uses the selected count and accounts for a partial final batch, while retaining the configured total ID space. `-validate-only` performs the same range checks and includes the requested range in its sole validation record. Progress and error `completed` counts measure scenarios delivered in this invocation, starting from zero, rather than absolute IDs.
 
@@ -110,6 +122,25 @@ func main() {
 `Run` schedules a bounded wave of batch jobs, waits for that wave, and calls the sink serially in scenario order. It retains no observations across waves. The sink owns delivered slices and can retain them at its own memory cost. Errors return a summary of the successfully delivered prefix. Exact tail estimates require explicit retained observations. Store complete paths only when needed.
 
 CPU streams use versioned SplitMix64 mixing and Box-Muller normals, with separate regime streams. Run seed and scenario ID determine each stream. Worker count and batch partition do not change CPU results. Replay is scoped to the same implementation, backend, and toolchain. CPU and CUDA use different generators and floating-point functions, so their paths are compared statistically.
+
+For many small CPU batches at arbitrary IDs, prepare a configuration once to reuse its validated correlation factor:
+
+```go
+prepared, err := (qs.CPU{}).Prepare(ctx, cfg)
+if err != nil {
+    return err
+}
+for _, first := range []uint64{80, 3, 42} { // Each ID must be below cfg.Paths.
+    scenarios, err := prepared.Batch(ctx, first, 1)
+    if err != nil {
+        return err
+    }
+    // Consume or retain independently owned scenarios.
+    _ = scenarios
+}
+```
+
+`PreparedCPU` owns a configuration snapshot; the original configuration may be changed after `Prepare` returns. Preparation validates the same model and configured wave limits as `CPU.Batch`, and each call also checks its requested range, batch size and storage. Batch calls may run concurrently, overlap or repeat IDs. Each call uses its own context; cancellation does not invalidate the prepared object or cancel another call. Bound aggregate memory by limiting concurrent calls and retained results. No `Close` is needed. This direct-batch API is bound to its configuration; `Run` already shares its CPU factor across batches. Include preparation when measuring a complete sequence of calls. `BenchmarkCPURandomAccessBatches` compares repeated `CPU.Batch`, reused preparation, and preparation plus sixteen noncontiguous batches on the same 128-asset workload.
 
 Inputs are validated before workers start. Limits include 256 assets, four regimes, 1,000,000 steps, 1,000,000,000 scenarios, 1,024 workers, 16,384 scenarios per batch, and an estimated 512 MiB wave budget. This budget includes CPU correlation setup and estimated live scenario storage. It excludes caller retention, input storage, runtime overhead, and arbitrary allocations by custom backends. Reduce workers or batch size for large stored paths. A Backend must support concurrent batches, owned result slices, valid complete results, and cancellation.
 
