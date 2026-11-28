@@ -46,6 +46,30 @@ func (b *Backend) BeginRun(ctx context.Context, cfg qs.Config) (qs.BackendSessio
 	return s, nil
 }
 
+// BeginRunRange starts one streaming runner for an absolute scenario ID range.
+// The selected count determines storage and maximum batch-work validation;
+// Config.Paths remains the original total ID space throughout the session.
+func (b *Backend) BeginRunRange(ctx context.Context, cfg qs.Config, startID, count uint64) (qs.BackendSession, error) {
+	bounds := scenarioRange{startID, count}
+	if err := validateRange(ctx, cfg, bounds); err != nil {
+		return nil, err
+	}
+	s, err := b.startSession(ctx, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &rangeSession{session: s, bounds: bounds}, nil
+}
+
+type rangeSession struct {
+	*session
+	bounds scenarioRange
+}
+
+func (s *rangeSession) Batch(ctx context.Context, cfg qs.Config, first uint64, count int) ([]qs.Scenario, error) {
+	return s.session.rangeBatch(ctx, cfg, s.bounds, first, count)
+}
+
 func (b *Backend) startSession(lifetime, startup context.Context) (*session, error) {
 	path, timeout, err := b.runner()
 	if err != nil {
@@ -116,6 +140,17 @@ func (s *session) batch(ctx context.Context, cfg qs.Config, first uint64, count 
 	if err := validateBatch(ctx, cfg, first, count); err != nil {
 		return nil, err
 	}
+	return s.exchange(ctx, cfg, first, count, record)
+}
+
+func (s *session) rangeBatch(ctx context.Context, cfg qs.Config, bounds scenarioRange, first uint64, count int) ([]qs.Scenario, error) {
+	if err := validateRangeBatch(ctx, cfg, bounds, first, count); err != nil {
+		return nil, err
+	}
+	return s.exchange(ctx, cfg, first, count, true)
+}
+
+func (s *session) exchange(ctx context.Context, cfg qs.Config, first uint64, count int, record bool) ([]qs.Scenario, error) {
 	select {
 	case s.token <- struct{}{}:
 		defer func() { <-s.token }()

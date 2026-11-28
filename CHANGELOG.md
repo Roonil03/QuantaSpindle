@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `CPU.Prepare` and `PreparedCPU.Batch` to reuse a validated correlation factor across arbitrary batches, with owned configuration snapshots and concurrent calls.
 - Preserve cancellation residuals in run summary means, finite means when scenario totals overflow, and successfully delivered partial-run summaries.
 - Retain representable CPU price increments from tiny log returns using compensated exponential updates.
 - Preserve finite impact prices and costs when spread plus temporary impact exceeds float64, and retain representable permanent midpoint moves.
