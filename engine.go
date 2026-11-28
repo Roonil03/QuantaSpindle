@@ -60,14 +60,8 @@ func (CPU) Batch(ctx context.Context, c Config, first uint64, count int) ([]Scen
 	if err := c.validateDimensions(); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := validateCPUBatch(ctx, c, first, count); err != nil {
 		return nil, err
-	}
-	if count < 1 || count > 16384 || first >= uint64(c.Paths) || uint64(count) > uint64(c.Paths)-first {
-		return nil, fmt.Errorf("batch IDs/count outside configured paths or batch limit")
-	}
-	if uint64(count)*scenarioBytes(c)+factorBytes(len(c.Assets)) > maxWaveBytes {
-		return nil, fmt.Errorf("batch exceeds 512 MiB storage limit")
 	}
 	l, err := correlationFactor(c.Correlation, len(c.Assets))
 	if err != nil {
@@ -76,7 +70,7 @@ func (CPU) Batch(ctx context.Context, c Config, first uint64, count int) ([]Scen
 	return cpuBatch(ctx, c, l, first, count)
 }
 
-// cpuBatch uses the immutable factor prepared once for this Run or Batch.
+// cpuBatch uses the immutable factor prepared for a Run, Batch, or PreparedCPU.
 func cpuBatch(ctx context.Context, c Config, l [][]float64, first uint64, count int) ([]Scenario, error) {
 	out := make([]Scenario, count)
 	for i := range out {
