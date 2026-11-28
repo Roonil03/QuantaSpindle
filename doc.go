@@ -26,6 +26,8 @@
 // Full paths are opt-in; exact empirical VaR/expected shortfall require callers
 // to retain observations. SquareRootImpact is a separate execution overlay and
 // does not automatically alter simulated paths.
+// LossHistogram optionally bounds empirical VaR and expected shortfall for
+// streamed signed losses using fixed bins and caller-declared finite bounds.
 //
 // The optional cuda package uses a separately compiled native FP64 runner for
 // single-asset, constant-parameter GBM without regimes, supplied correlation or
