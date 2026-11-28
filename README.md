@@ -44,6 +44,8 @@ CLI output is newline-delimited JSON. The first record contains configuration an
 
 When building from the current checkout, `-h` and `--help` print usage and exit successfully. Unknown flags and invalid inputs exit nonzero.
 
+`-json-errors` additionally emits one JSON error record on stdout for flag, configuration, validation, or backend-selection failures before metadata. Stderr diagnostics and nonzero failure exits are retained. Failures after metadata include `elapsed_ns` and the available selection/CUDA statistics in their existing error record, without a duplicate startup record or a successful summary. [CLI error records and option-scan rules](docs/cli-errors.md)
+
 For long runs, opt into scenario-count progress on stderr while keeping stdout as newline-delimited JSON:
 
 ```sh
