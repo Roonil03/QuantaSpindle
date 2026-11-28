@@ -123,6 +123,25 @@ func main() {
 
 CPU streams use versioned SplitMix64 mixing and Box-Muller normals, with separate regime streams. Run seed and scenario ID determine each stream. Worker count and batch partition do not change CPU results. Replay is scoped to the same implementation, backend, and toolchain. CPU and CUDA use different generators and floating-point functions, so their paths are compared statistically.
 
+For many small CPU batches at arbitrary IDs, prepare a configuration once to reuse its validated correlation factor:
+
+```go
+prepared, err := (qs.CPU{}).Prepare(ctx, cfg)
+if err != nil {
+    return err
+}
+for _, first := range []uint64{80, 3, 42} { // Each ID must be below cfg.Paths.
+    scenarios, err := prepared.Batch(ctx, first, 1)
+    if err != nil {
+        return err
+    }
+    // Consume or retain independently owned scenarios.
+    _ = scenarios
+}
+```
+
+`PreparedCPU` owns a configuration snapshot; the original configuration may be changed after `Prepare` returns. Preparation validates the same model and configured wave limits as `CPU.Batch`, and each call also checks its requested range, batch size and storage. Batch calls may run concurrently, overlap or repeat IDs. Each call uses its own context; cancellation does not invalidate the prepared object or cancel another call. Bound aggregate memory by limiting concurrent calls and retained results. No `Close` is needed. This direct-batch API is bound to its configuration; `Run` already shares its CPU factor across batches. Include preparation when measuring a complete sequence of calls. `BenchmarkCPURandomAccessBatches` compares repeated `CPU.Batch`, reused preparation, and preparation plus sixteen noncontiguous batches on the same 128-asset workload.
+
 Inputs are validated before workers start. Limits include 256 assets, four regimes, 1,000,000 steps, 1,000,000,000 scenarios, 1,024 workers, 16,384 scenarios per batch, and an estimated 512 MiB wave budget. This budget includes CPU correlation setup and estimated live scenario storage. It excludes caller retention, input storage, runtime overhead, and arbitrary allocations by custom backends. Reduce workers or batch size for large stored paths. A Backend must support concurrent batches, owned result slices, valid complete results, and cancellation.
 
 ## Optional CUDA
