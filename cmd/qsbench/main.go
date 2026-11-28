@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	qs "github.com/Roonil03/QuantaSpindle"
 	"github.com/Roonil03/QuantaSpindle/cuda"
@@ -24,6 +23,10 @@ func main() {
 }
 
 func run() error {
+	return runWithDependencies(defaultBenchmarkDependencies())
+}
+
+func runWithDependencies(deps benchmarkDependencies) error {
 	backendNames := flag.String("backend", "cpu", "comma-separated cpu, cuda-batch (one process per batch), or cuda")
 	runner := flag.String("cuda-runner", "", "trusted CUDA runner path")
 	batchRunner := flag.String("cuda-batch-runner", "", "optional separate runner for cuda-batch, e.g. the release baseline")
@@ -67,6 +70,28 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	build := identifyBuild(deps.build())
+	// Resolve/hash once per selected CUDA mode, before warm-up or trial clocks.
+	// Pin execution to that absolute path so environment/PATH changes cannot
+	// silently select a different executable later in the sweep.
+	runners := make(map[string]runnerIdentity)
+	for _, item := range cases {
+		if item.mode == "cpu" {
+			continue
+		}
+		if _, exists := runners[item.mode]; exists {
+			continue
+		}
+		selected := *runner
+		if item.mode == "cuda-batch" && *batchRunner != "" {
+			selected = *batchRunner
+		}
+		identity := deps.runner(selected)
+		if identity.Path == "" {
+			return fmt.Errorf("%s runner resolution: %s", item.mode, identity.Error)
+		}
+		runners[item.mode] = identity
+	}
 	encoder := json.NewEncoder(os.Stdout)
 	// Warm each case once. Reverse the measured case order on alternate trials,
 	// so a backend is not always measured first or last on a shared laptop.
@@ -84,21 +109,18 @@ func run() error {
 			case "cpu":
 				backend = qs.CPU{}
 			case "cuda", "cuda-batch":
-				gpu = &cuda.Backend{Runner: *runner}
+				gpu = &cuda.Backend{Runner: runners[item.mode].Path}
 				backend = gpu
 				if item.mode == "cuda-batch" {
-					if *batchRunner != "" {
-						gpu.Runner = *batchRunner
-					}
 					backend = batchOnly{gpu}
 				}
 			}
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			started := time.Now()
+			started := deps.now()
 			summary, err := qs.Run(context.Background(), cfg, backend, nil)
-			elapsed := time.Since(started)
+			elapsed := deps.now().Sub(started)
 			runtime.ReadMemStats(&after)
 			if err != nil {
 				return err
@@ -112,7 +134,9 @@ func run() error {
 			record := map[string]any{"backend": backend.Name(), "mode": item.mode, "trial": trial + 1, "order": position + 1, "config": cfg, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "gomaxprocs": runtime.GOMAXPROCS(0), "elapsed_ns": elapsed.Nanoseconds(), "scenarios_per_second": float64(cfg.Paths) / elapsed.Seconds(), "asset_paths_per_second": float64(cfg.Paths*len(cfg.Assets)) / elapsed.Seconds(), "go_allocated_bytes": after.TotalAlloc - before.TotalAlloc, "go_allocations": after.Mallocs - before.Mallocs, "summary": summary}
 			if gpu != nil {
 				record["cuda"] = gpu.Stats()
+				record["cuda_runner"] = runners[item.mode]
 			}
+			record["build"] = build
 			if err := encoder.Encode(record); err != nil {
 				return err
 			}

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Include Go build information and per-mode resolved CUDA runner SHA-256 identity in direct `qsbench` trial records, collected before timing.
 - Preserve cancellation residuals in run summary means, finite means when scenario totals overflow, and successfully delivered partial-run summaries.
 - Retain representable CPU price increments from tiny log returns using compensated exponential updates.
 - Preserve finite impact prices and costs when spread plus temporary impact exceeds float64, and retain representable permanent midpoint moves.
